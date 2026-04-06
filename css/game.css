@@ -1,0 +1,238 @@
+/* Game Stats Bar */
+.game-stats-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  margin-bottom: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.game-mode-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.timer {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  transition: color 0.3s ease;
+}
+
+.timer-warning {
+  color: var(--primary);
+}
+
+.timer-danger {
+  color: var(--error);
+}
+
+.game-live-stats {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.live-stat {
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-family: 'Outfit', sans-serif;
+}
+
+.live-stat span {
+  color: var(--text-primary);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+}
+
+/* Progress bar */
+.progress-bar {
+  width: 100%;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  margin-bottom: 1.5rem;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 2px;
+  transition: width 0.15s linear;
+  width: 0%;
+}
+
+/* Game Area */
+.game-area {
+  position: relative;
+  max-width: 800px;
+  margin: 0 auto;
+  min-height: 300px;
+}
+
+.text-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.3rem;
+  line-height: 2.2;
+  max-height: 55vh;
+  overflow-y: auto;
+  padding: 1.5rem 0;
+  position: relative;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 8%,
+    black 92%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 8%,
+    black 92%,
+    transparent 100%
+  );
+  scrollbar-width: none;
+}
+
+.text-display::-webkit-scrollbar {
+  display: none;
+}
+
+.text-display span {
+  transition: none;
+}
+
+/* Character states */
+.char-untyped {
+  color: var(--char-untyped);
+}
+
+.char-correct {
+  color: var(--char-correct);
+}
+
+.char-incorrect {
+  color: var(--char-incorrect);
+  background: rgba(239, 68, 68, 0.15);
+  border-radius: 2px;
+}
+
+.char-current {
+  color: var(--char-current);
+  position: relative;
+}
+
+.char-current::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--char-current);
+  animation: cursorBlink 0.8s ease infinite;
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+/* Hidden input */
+.game-input-handler {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+/* Start hint */
+.start-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  font-weight: 500;
+  animation: hintPulse 2s ease infinite;
+  pointer-events: none;
+  z-index: 5;
+}
+
+@keyframes hintPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* Overlays */
+.pause-overlay,
+.focus-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 26, 46, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  backdrop-filter: blur(4px);
+}
+
+.pause-box {
+  text-align: center;
+}
+
+.pause-box h2 {
+  font-family: 'Syne', sans-serif;
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 1.5rem;
+}
+
+.pause-box .btn {
+  margin: 0 0.5rem;
+}
+
+.focus-overlay p {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .game-stats-bar {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .game-mode-label {
+    display: none;
+  }
+
+  .timer {
+    font-size: 1.4rem;
+  }
+
+  .text-display {
+    font-size: 1.1rem;
+    line-height: 2;
+  }
+
+  .game-area {
+    min-height: 250px;
+  }
+}
+
+@media (max-width: 480px) {
+  .text-display {
+    font-size: 1rem;
+  }
+}

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TypeRush — How fast can you type?</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/game.css">
+  <link rel="stylesheet" href="css/results.css">
+</head>
+<body>
+  <nav class="navbar">
+    <a href="#" class="nav-logo" id="navLogo">
+      <span class="logo-bolt">&zwj;&#9889;</span>
+      <span class="logo-text">TypeRush</span>
+    </a>
+    <div class="nav-actions">
+      <button class="nav-btn" id="soundToggle" title="Toggle sound">&#128263;</button>
+      <button class="nav-btn" id="achievementsBtn" title="Achievements">&#127942;</button>
+      <button class="nav-btn" id="leaderboardBtn" title="Leaderboard">&#127941;</button>
+    </div>
+  </nav>
+
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- HOME VIEW -->
+  <main class="view active" id="homeView">
+    <div class="home-hero">
+      <h1 class="home-title"><span class="logo-bolt">&zwj;&#9889;</span> TypeRush</h1>
+      <p class="home-tagline">How fast can you type?</p>
+    </div>
+    <div class="mode-grid">
+      <!-- Classic -->
+      <div class="mode-card" data-mode="classic">
+        <div class="mode-icon">&#128221;</div>
+        <h2 class="mode-name">Classic Mode</h2>
+        <p class="mode-desc">Type famous quotes and excerpts</p>
+        <div class="mode-options">
+          <button class="mode-option" data-value="easy">Easy</button>
+          <button class="mode-option selected" data-value="medium">Medium</button>
+          <button class="mode-option" data-value="hard">Hard</button>
+        </div>
+        <div class="time-options">
+          <button class="mode-option" data-value="15">15s</button>
+          <button class="mode-option" data-value="30">30s</button>
+          <button class="mode-option selected" data-value="60">60s</button>
+          <button class="mode-option" data-value="120">120s</button>
+        </div>
+      </div>
+      <!-- Code -->
+      <div class="mode-card" data-mode="code">
+        <div class="mode-icon">&#128187;</div>
+        <h2 class="mode-name">Code Mode</h2>
+        <p class="mode-desc">Type real code snippets — brackets, semicolons, and all</p>
+        <div class="mode-options">
+          <button class="mode-option selected" data-value="javascript">JavaScript</button>
+          <button class="mode-option" data-value="python">Python</button>
+          <button class="mode-option" data-value="html">HTML</button>
+          <button class="mode-option" data-value="css">CSS</button>
+          <button class="mode-option" data-value="rust">Rust</button>
+        </div>
+        <div class="time-options">
+          <button class="mode-option" data-value="15">15s</button>
+          <button class="mode-option" data-value="30">30s</button>
+          <button class="mode-option selected" data-value="60">60s</button>
+          <button class="mode-option" data-value="120">120s</button>
+        </div>
+      </div>
+      <!-- Words -->
+      <div class="mode-card" data-mode="words">
+        <div class="mode-icon">&#128292;</div>
+        <h2 class="mode-name">Words Mode</h2>
+        <p class="mode-desc">Pure random words — no punctuation, just speed</p>
+        <div class="word-options">
+          <button class="mode-option" data-value="25">25</button>
+          <button class="mode-option selected" data-value="50">50</button>
+          <button class="mode-option" data-value="100">100</button>
+          <button class="mode-option" data-value="200">200</button>
+        </div>
+      </div>
+      <!-- Custom -->
+      <div class="mode-card" data-mode="custom">
+        <div class="mode-icon">&#9999;&#65039;</div>
+        <h2 class="mode-name">Custom Mode</h2>
+        <p class="mode-desc">Paste your own text and race against it</p>
+        <textarea id="customTextarea" class="custom-textarea" placeholder="Paste your text here (minimum 10 characters)..." rows="4"></textarea>
+        <button class="btn btn-primary" id="startCustomBtn">Start Typing</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- GAME VIEW -->
+  <main class="view" id="gameView">
+    <div class="game-stats-bar">
+      <span class="game-mode-label" id="gameMode">Classic · Medium</span>
+      <span class="timer" id="gameTimer">1:00</span>
+      <div class="game-live-stats">
+        <span class="live-stat"><span id="gameWpm">0</span> WPM</span>
+        <span class="live-stat"><span id="gameAccuracy">100%</span></span>
+      </div>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    <div class="game-area">
+      <div class="text-display" id="textDisplay"></div>
+      <div class="start-hint" id="startHint">Start typing...</div>
+      <input type="text" id="gameInputHandler" class="game-input-handler" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <!-- Pause overlay -->
+    <div class="pause-overlay" id="pauseOverlay" style="display:none">
+      <div class="pause-box">
+        <h2>Paused</h2>
+        <button class="btn btn-primary" id="pauseResume">Resume</button>
+        <button class="btn btn-secondary" id="pauseQuit">Quit</button>
+      </div>
+    </div>
+    <!-- Focus overlay -->
+    <div class="focus-overlay" id="focusOverlay" style="display:none">
+      <p>Click here or press any key to continue</p>
+    </div>
+  </main>
+
+  <!-- RESULTS VIEW -->
+  <main class="view" id="resultsView">
+    <div id="resultsContent" class="results-content"></div>
+  </main>
+
+  <!-- LEADERBOARD VIEW -->
+  <main class="view" id="leaderboardView">
+    <div class="sub-view-header">
+      <button class="btn btn-back" id="lbBackBtn">&larr; Back</button>
+      <h2 class="sub-view-title">&#127941; Leaderboard</h2>
+    </div>
+    <div id="leaderboardContent" class="leaderboard-content"></div>
+  </main>
+
+  <!-- ACHIEVEMENTS VIEW -->
+  <main class="view" id="achievementsView">
+    <div class="sub-view-header">
+      <button class="btn btn-back" id="achBackBtn">&larr; Back</button>
+      <h2 class="sub-view-title">&#127942; Achievements</h2>
+    </div>
+    <div id="achievementsContent" class="achievements-content"></div>
+  </main>
+
+  <script src="js/texts.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/leaderboard.js"></script>
+  <script src="js/achievements.js"></script>
+  <script src="js/results.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
