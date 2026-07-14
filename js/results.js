@@ -1,4 +1,7 @@
 const Results = (() => {
+  const reducedMotionQuery = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  const prefersReducedMotion = () => !!(reducedMotionQuery && reducedMotionQuery.matches);
+
   function render(result, container) {
     const isPB = Leaderboard.isPersonalBest(result);
     const wpmColor = getWpmColor(result.wpm);
@@ -53,7 +56,8 @@ const Results = (() => {
     `;
 
     animateWpmCounter(result.wpm, wpmColor);
-    if (isPB) spawnConfetti();
+    activateChart(container);
+    if (isPB && !prefersReducedMotion()) spawnConfetti();
 
     setTimeout(() => {
       container.querySelectorAll(".stat-card").forEach((card, i) => {
@@ -66,6 +70,10 @@ const Results = (() => {
   function animateWpmCounter(target, color) {
     const el = document.getElementById("wpmCounter");
     if (!el) return;
+    if (prefersReducedMotion()) {
+      el.textContent = target;
+      return;
+    }
     const duration = 1000;
     const start = performance.now();
     function step(now) {
@@ -75,6 +83,32 @@ const Results = (() => {
       if (progress < 1) requestAnimationFrame(step);
     }
     requestAnimationFrame(step);
+  }
+
+  // Draws the WPM-over-time line using its real measured length instead of
+  // a guessed stroke-dasharray constant, so the "line drawing" reveal is
+  // pixel-accurate regardless of data shape. Runs once per results screen
+  // (not on the typing hot path), so getTotalLength()'s cost is a non-issue.
+  function activateChart(container) {
+    const path = container.querySelector(".chart-line");
+    if (!path) return;
+    const length = path.getTotalLength();
+    path.style.strokeDasharray = String(length);
+    path.style.strokeDashoffset = String(length);
+
+    if (prefersReducedMotion()) {
+      path.style.transition = "none";
+      path.style.strokeDashoffset = "0";
+      return;
+    }
+
+    // Force a style flush so the browser registers the starting offset
+    // before we animate to 0, otherwise the transition can be skipped.
+    path.getBoundingClientRect();
+    requestAnimationFrame(() => {
+      path.style.transition = "stroke-dashoffset 1.2s var(--ease-out, ease) 0.1s";
+      path.style.strokeDashoffset = "0";
+    });
   }
 
   function renderWpmChart(data) {

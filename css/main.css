@@ -14,12 +14,30 @@
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
   --border: #2d3748;
+
+  /* Motion tokens */
+  --motion-fast: 90ms;
+  --motion-med: 220ms;
+  --motion-slow: 420ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 *, *::before, *::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+/* Respect user motion preference: freeze all CSS-driven animation/transition
+   to near-instant. JS-driven motion (rAF counters, confetti, caret glide)
+   checks matchMedia('(prefers-reduced-motion: reduce)') separately. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 html {
@@ -45,6 +63,12 @@ body {
 
 .view.active {
   display: block;
+  animation: viewEnter var(--motion-slow) var(--ease-out);
+}
+
+@keyframes viewEnter {
+  from { opacity: 0; transform: translateY(10px) scale(0.995); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Navbar */
@@ -291,8 +315,33 @@ body {
   cursor: not-allowed;
 }
 
+.btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
 .pulse {
   animation: pulse 1.5s ease infinite;
+}
+
+/* Tactile micro-interactions + focus states (transform/opacity only) */
+.nav-btn:active,
+.mode-option:active,
+.lb-filter:active,
+.lb-sort-btn:active,
+.btn-back:active {
+  transform: scale(0.92);
+}
+
+.btn:focus-visible,
+.nav-btn:focus-visible,
+.mode-option:focus-visible,
+.lb-filter:focus-visible,
+.lb-sort-btn:focus-visible,
+.btn-back:focus-visible,
+.custom-textarea:focus-visible,
+.mode-card:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /* Sub-view header */
@@ -336,6 +385,20 @@ body {
 
 .toast.show {
   transform: translateX(0);
+}
+
+/* Extra celebratory pop for achievement-unlock toasts (reduced-motion gated
+   in JS: the "achievement" class is only added when motion is allowed). */
+.toast.achievement {
+  border-color: var(--primary);
+  box-shadow: 0 8px 28px rgba(251, 191, 36, 0.25);
+  animation: toastPop var(--motion-med) var(--ease-out);
+}
+
+@keyframes toastPop {
+  0% { transform: translateX(120%) scale(0.85); }
+  55% { transform: translateX(-6%) scale(1.04); }
+  100% { transform: translateX(0) scale(1); }
 }
 
 /* Leaderboard */

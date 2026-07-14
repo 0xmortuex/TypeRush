@@ -3,6 +3,16 @@ const App = (() => {
   let currentSettings = {};
   let soundEnabled = false;
   let audioCtx = null;
+  let caretEl = null;
+
+  // Per-round motion state. Cleared by resetRoundState() at the start of
+  // every game so a rapid Try Again / New Mode can't carry over stale
+  // milestone/animation bookkeeping from the previous round.
+  let lastWpmMilestone = 0;
+  const WPM_MILESTONES = [50, 80, 100, 120, 150];
+
+  const reducedMotionQuery = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  const prefersReducedMotion = () => !!(reducedMotionQuery && reducedMotionQuery.matches);
 
   const views = {
     home: null,
@@ -17,6 +27,11 @@ const App = (() => {
     bindNav();
     bindModeCards();
     showView("home");
+  }
+
+  function resetRoundState() {
+    lastWpmMilestone = 0;
+    if (caretEl) caretEl.classList.remove("visible");
   }
 
   function cacheViews() {
@@ -110,6 +125,7 @@ const App = (() => {
   }
 
   function startGame(settings) {
+    resetRoundState();
     currentSettings = settings;
     const state = GameEngine.init(settings.text, settings);
 
@@ -164,7 +180,44 @@ const App = (() => {
       }
     }
     container.innerHTML = html;
+    ensureCaret(container);
+    positionCaret(container, currentIndex, true);
     scrollToCurrentChar(currentIndex);
+  }
+
+  function ensureCaret(container) {
+    caretEl = document.getElementById("typeCaret");
+    if (!caretEl) {
+      caretEl = document.createElement("div");
+      caretEl.id = "typeCaret";
+      caretEl.className = "type-caret";
+    }
+    container.appendChild(caretEl);
+  }
+
+  // Glides a single overlay caret to the current character position using
+  // transform (compositor-friendly, no layout). Called once per keystroke —
+  // cheap: one rect read, one style write. `instant` skips the transition
+  // for the very first paint so the caret doesn't slide in from (0,0).
+  function positionCaret(container, index, instant) {
+    if (!caretEl) return;
+    const target = container.querySelector(`span[data-index="${index}"]`);
+    if (!target) {
+      caretEl.classList.remove("visible");
+      return;
+    }
+    const containerRect = container.getBoundingClientRect();
+    const rect = target.getBoundingClientRect();
+    const x = rect.left - containerRect.left + container.scrollLeft;
+    const y = rect.top - containerRect.top + container.scrollTop;
+
+    if (instant) caretEl.style.transitionDuration = "0ms, 0ms, 0ms";
+    caretEl.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+    caretEl.style.height = rect.height + "px";
+    caretEl.classList.add("visible");
+    if (instant) {
+      requestAnimationFrame(() => { caretEl.style.transitionDuration = ""; });
+    }
   }
 
   function scrollToCurrentChar(index) {
@@ -197,6 +250,22 @@ const App = (() => {
     document.getElementById("progressFill").style.width = progress + "%";
 
     updateCharDisplay(state);
+    checkWpmMilestone(state.wpm);
+  }
+
+  // Subtle pulse on the live WPM readout when the player crosses a speed
+  // milestone. Purely decorative, so it's skipped entirely under
+  // prefers-reduced-motion rather than just relying on the CSS gate.
+  function checkWpmMilestone(wpm) {
+    if (prefersReducedMotion()) return;
+    const hit = WPM_MILESTONES.find(m => wpm >= m && lastWpmMilestone < m);
+    if (!hit) return;
+    lastWpmMilestone = hit;
+    const liveStat = document.getElementById("gameWpm").closest(".live-stat");
+    if (!liveStat) return;
+    liveStat.classList.remove("milestone-pulse");
+    void liveStat.offsetWidth; // restart the animation
+    liveStat.classList.add("milestone-pulse");
   }
 
   function updateCharDisplay(state) {
@@ -218,6 +287,7 @@ const App = (() => {
       }
     });
 
+    positionCaret(container, state.currentIndex, false);
     scrollToCurrentChar(state.currentIndex);
   }
 
@@ -317,7 +387,7 @@ const App = (() => {
   function onGameEnd(results) {
     const newAchievements = Achievements.checkUnlocks(results);
     newAchievements.forEach(a => {
-      showToast(`\ud83c\udfc6 Achievement Unlocked: ${a.title}!`);
+      showToast(`\ud83c\udfc6 Achievement Unlocked: ${a.title}!`, { achievement: true });
     });
 
     const container = document.getElementById("resultsContent");
@@ -442,10 +512,10 @@ const App = (() => {
     `).join("")}</div>`;
   }
 
-  function showToast(message) {
+  function showToast(message, options = {}) {
     const container = document.getElementById("toastContainer");
     const toast = document.createElement("div");
-    toast.className = "toast";
+    toast.className = "toast" + (options.achievement && !prefersReducedMotion() ? " achievement" : "");
     toast.textContent = message;
     container.appendChild(toast);
     requestAnimationFrame(() => toast.classList.add("show"));
@@ -457,7 +527,10 @@ const App = (() => {
 
   function playSound(type) {
     if (!soundEnabled) return;
+    // Single reused AudioContext instance for the app's lifetime — never
+    // create a new one per toggle/play (browsers cap concurrent contexts).
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume();
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.connect(gain);
