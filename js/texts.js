@@ -292,5 +292,90 @@ const TextContent = (() => {
     return words.join(" ");
   }
 
-  return { getClassicText, getCodeSnippet, generateWords };
+  // Hands out the items of a pool in shuffled order. Every item comes up
+  // once before any repeats, and when the pool is reshuffled the same item
+  // is never served twice in a row. `random` is injectable for tests.
+  function createPicker(pool, random = Math.random) {
+    let queue = [];
+    let last = null;
+
+    function refill() {
+      queue = pool.slice();
+      for (let i = queue.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [queue[i], queue[j]] = [queue[j], queue[i]];
+      }
+      // Items are taken from the end; keep the previous item away from it.
+      if (queue.length > 1 && queue[queue.length - 1] === last) {
+        [queue[0], queue[queue.length - 1]] = [queue[queue.length - 1], queue[0]];
+      }
+    }
+
+    return function next() {
+      if (queue.length === 0) refill();
+      last = queue.pop();
+      return last;
+    };
+  }
+
+  // An endless supply of text for a timed test, so the test lasts for the
+  // time on the clock instead of ending when one quote runs out.
+  // next() returns the next quote or snippet; `separator` is what joins it
+  // to the text before it (a space between quotes, a blank line between
+  // code snippets).
+  function createStream(mode, option, random = Math.random) {
+    if (mode === "code") {
+      return { next: createPicker(codeSnippets[option] || codeSnippets.javascript, random), separator: "\n\n" };
+    }
+    return { next: createPicker(classicTexts[option] || classicTexts.medium, random), separator: " " };
+  }
+
+  // Characters that arrive with text pasted from web pages and documents
+  // but that no key on a plain keyboard produces, with what to type
+  // instead. Written as code points so this file stays plain ASCII.
+  const TYPABLE_EQUIVALENTS = [
+    // curly single quotes, low and reversed quotes, prime, modifier apostrophe
+    [[0x2018, 0x2019, 0x201a, 0x201b, 0x2032, 0x02bc], "'"],
+    // curly double quotes, low and reversed double quotes, double prime
+    [[0x201c, 0x201d, 0x201e, 0x201f, 0x2033], '"'],
+    // hyphen, non-breaking hyphen, figure dash, en dash, em dash, bar, minus
+    [[0x2010, 0x2011, 0x2012, 0x2013, 0x2014, 0x2015, 0x2212], "-"],
+    // ellipsis
+    [[0x2026], "..."],
+    // non-breaking space and the fixed-width spaces
+    [[0x00a0, 0x1680, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006,
+      0x2007, 0x2008, 0x2009, 0x200a, 0x202f, 0x205f, 0x3000], " "],
+    // zero-width space / non-joiner / joiner, word joiner, byte-order mark,
+    // soft hyphen: invisible, so they are dropped
+    [[0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x00ad], ""],
+    // tab: outside Code mode the Tab key moves focus, so it becomes spaces
+    [[0x0009], "  "]
+  ];
+  const typableEquivalent = new Map();
+  TYPABLE_EQUIVALENTS.forEach(([codePoints, replacement]) => {
+    codePoints.forEach(code => typableEquivalent.set(String.fromCodePoint(code), replacement));
+  });
+
+  // Makes pasted text typable: swaps the characters above for their plain
+  // equivalents, drops control characters, and removes spaces at the end of
+  // lines (they cannot be seen but would have to be typed). Letters of any
+  // alphabet, accents included, are left exactly as they are.
+  function normalizeCustomText(raw) {
+    let text = "";
+    for (const char of String(raw).replace(/\r\n?/g, "\n")) {
+      if (typableEquivalent.has(char)) {
+        text += typableEquivalent.get(char);
+      } else if (char === "\n" || (char >= " " && char !== "\x7f")) {
+        text += char;
+      }
+    }
+    return text.replace(/ +\n/g, "\n").trim();
+  }
+
+  // Read-only copies of the built-in content, for the test-suite.
+  function getContent() {
+    return JSON.parse(JSON.stringify({ classicTexts, codeSnippets, wordList }));
+  }
+
+  return { getClassicText, getCodeSnippet, generateWords, createStream, normalizeCustomText, getContent };
 })();

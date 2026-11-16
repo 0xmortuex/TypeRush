@@ -10,9 +10,13 @@ const App = (() => {
   // milestone/animation bookkeeping from the previous round.
   let lastWpmMilestone = 0;
   const WPM_MILESTONES = [50, 80, 100, 120, 150];
+  const MILESTONE_MIN_SECONDS = 3;
 
   const reducedMotionQuery = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
   const prefersReducedMotion = () => !!(reducedMotionQuery && reducedMotionQuery.matches);
+
+  // On Apple keyboards the Option key (reported as Alt) types characters.
+  const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "");
 
   const views = {
     home: null,
@@ -22,16 +26,63 @@ const App = (() => {
     achievements: null
   };
 
+  // The player of a timed test is never allowed closer than TIMED_LOOKAHEAD
+  // characters to the end of the text: more is added before that happens.
+  // 600 characters is nine or more lines, so it is added below the lines
+  // in view. The opening text is long enough that someone typing
+  // TIMED_CHARS_PER_SECOND for the whole test (16 a second is about
+  // 190 WPM) never needs any added at all.
+  const TIMED_CHARS_PER_SECOND = 16;
+  const TIMED_LOOKAHEAD = 600;
+  let textStream = null;
+
+  // The round on screen: one span per character, and the cursor position
+  // those spans were last painted for.
+  let charSpans = [];
+  let renderedIndex = 0;
+
+  // True while the clock is stopped because the typing field lost focus or
+  // the tab was hidden (as opposed to the player pressing Escape).
+  let blurPaused = false;
+
+  // When the results screen last appeared, and how long its keyboard
+  // shortcuts stay off after that.
+  let resultsShownAt = 0;
+  const RESULTS_KEY_GUARD_MS = 1000;
+
   function init() {
+    // A problem with saved data (blocked or full storage, a damaged value)
+    // is shown to the player and logged, never swallowed.
+    SaveData.setProblemHandler((message, error) => {
+      if (error) console.error(`[TypeRush] ${message}`, error);
+      else console.error(`[TypeRush] ${message}`);
+      // One round can fail to save twice (counts, then achievements): the
+      // console gets both, the player sees the message once at a time.
+      const showing = Array.from(document.getElementById("toastContainer").children);
+      if (!showing.some(toast => toast.textContent === message)) showToast(message);
+    });
+
     cacheViews();
     bindNav();
     bindModeCards();
+    bindGameInput();
     showView("home");
   }
 
   function resetRoundState() {
     lastWpmMilestone = 0;
+    blurPaused = false;
     if (caretEl) caretEl.classList.remove("visible");
+  }
+
+  // Abandons the round in progress, if any. Every way out of the game view
+  // goes through here so a round can never keep running behind another
+  // view and later pull the player onto a results screen.
+  function leaveGame() {
+    GameEngine.destroy();
+    blurPaused = false;
+    document.getElementById("pauseOverlay").style.display = "none";
+    document.getElementById("focusOverlay").style.display = "none";
   }
 
   function cacheViews() {
@@ -53,16 +104,18 @@ const App = (() => {
   function bindNav() {
     document.getElementById("navLogo").addEventListener("click", (e) => {
       e.preventDefault();
-      GameEngine.destroy();
+      leaveGame();
       showView("home");
     });
 
     document.getElementById("leaderboardBtn").addEventListener("click", () => {
+      leaveGame();
       renderLeaderboard();
       showView("leaderboard");
     });
 
     document.getElementById("achievementsBtn").addEventListener("click", () => {
+      leaveGame();
       renderAchievements();
       showView("achievements");
     });
@@ -70,6 +123,7 @@ const App = (() => {
     document.getElementById("soundToggle").addEventListener("click", () => {
       soundEnabled = !soundEnabled;
       document.getElementById("soundToggle").textContent = soundEnabled ? "\ud83d\udd0a" : "\ud83d\udd07";
+      document.getElementById("soundToggle").setAttribute("aria-pressed", String(soundEnabled));
     });
 
     document.getElementById("lbBackBtn").addEventListener("click", () => showView("home"));
@@ -84,20 +138,33 @@ const App = (() => {
       });
 
       card.querySelectorAll(".mode-option").forEach(opt => {
+        // The chosen option of each group is announced as a pressed button.
+        opt.setAttribute("aria-pressed", String(opt.classList.contains("selected")));
         opt.addEventListener("click", () => {
-          opt.closest(".mode-options, .time-options, .word-options").querySelectorAll(".mode-option").forEach(o => o.classList.remove("selected"));
+          opt.closest(".mode-options, .time-options, .word-options").querySelectorAll(".mode-option").forEach(o => {
+            o.classList.remove("selected");
+            o.setAttribute("aria-pressed", "false");
+          });
           opt.classList.add("selected");
+          opt.setAttribute("aria-pressed", "true");
         });
       });
     });
 
     document.getElementById("startCustomBtn").addEventListener("click", () => {
-      const text = document.getElementById("customTextarea").value.trim();
+      const pasted = document.getElementById("customTextarea").value.trim();
+      // Text copied from a web page or a document is full of characters no
+      // key produces (curly quotes, long dashes, non-breaking spaces). They
+      // are swapped for the ones a keyboard has, and the player is told.
+      const text = TextContent.normalizeCustomText(pasted);
       if (text.length < 10) {
         showToast("Please enter at least 10 characters.");
         return;
       }
-      startGame({ mode: "custom", text, duration: 9999 });
+      if (text !== pasted) {
+        showToast("Your text was tidied so every character can be typed: curly quotes, long dashes and the like were replaced with plain ones.");
+      }
+      startGame({ mode: "custom", text });
     });
   }
 
@@ -110,18 +177,43 @@ const App = (() => {
     if (mode === "classic") {
       settings.difficulty = card.querySelector(".mode-options .selected")?.dataset.value || "medium";
       settings.duration = parseInt(card.querySelector(".time-options .selected")?.dataset.value || "60");
-      settings.text = TextContent.getClassicText(settings.difficulty);
     } else if (mode === "code") {
       settings.language = card.querySelector(".mode-options .selected")?.dataset.value || "javascript";
       settings.duration = parseInt(card.querySelector(".time-options .selected")?.dataset.value || "60");
-      settings.text = TextContent.getCodeSnippet(settings.language);
     } else if (mode === "words") {
       settings.wordCount = parseInt(card.querySelector(".word-options .selected")?.dataset.value || "50");
-      settings.duration = 9999;
-      settings.text = TextContent.generateWords(settings.wordCount);
     }
 
+    settings.text = newRoundText(settings);
     startGame(settings);
+  }
+
+  // Fresh text for a round with these settings. Custom keeps the player's
+  // own text; Words draws a new set of words; the timed modes open a new
+  // stream of quotes or snippets and take enough of it for the whole test.
+  function newRoundText(settings) {
+    textStream = null;
+    if (settings.mode === "custom") return settings.text;
+    if (settings.mode === "words") return TextContent.generateWords(settings.wordCount);
+
+    textStream = TextContent.createStream(settings.mode, settings.mode === "code" ? settings.language : settings.difficulty);
+    let text = textStream.next();
+    const wanted = settings.duration * TIMED_CHARS_PER_SECOND + TIMED_LOOKAHEAD;
+    while (text.length < wanted) text += textStream.separator + textStream.next();
+    return text;
+  }
+
+  // Keeps a timed test supplied with text. The opening text already covers
+  // the whole test at TIMED_CHARS_PER_SECOND; this only adds more for a
+  // player who outruns that, and does so well below the lines in view.
+  function topUpText(state) {
+    if (!state.timedMode || !textStream) return;
+    while (state.chars.length - state.currentIndex < TIMED_LOOKAHEAD) {
+      const extra = textStream.separator + textStream.next();
+      const startIndex = state.chars.length;
+      GameEngine.appendText(extra);
+      appendTextDisplay(extra, startIndex);
+    }
   }
 
   function startGame(settings) {
@@ -136,53 +228,66 @@ const App = (() => {
 
     renderGameView(settings);
     showView("game");
+    // The view was hidden while it was drawn, so there was nothing to
+    // measure: place the caret now that the text has a layout.
+    const display = document.getElementById("textDisplay");
+    display.scrollTop = 0;
+    positionCaret(display, 0, true);
     focusGame();
   }
 
   function renderGameView(settings) {
-    const modeLabel = settings.mode.charAt(0).toUpperCase() + settings.mode.slice(1);
-    const subLabel = settings.difficulty || settings.language || `${settings.wordCount} words`;
-
-    document.getElementById("gameMode").textContent = `${modeLabel} \u00b7 ${subLabel}`;
-    document.getElementById("gameTimer").textContent = settings.duration < 9999 ? formatTime(settings.duration) : "0:00";
+    document.getElementById("gameMode").textContent = Results.describeRound(settings);
+    // Timed tests count down from their duration; the others count up.
+    document.getElementById("gameTimer").textContent = formatTime(settings.duration || 0);
     document.getElementById("gameTimer").className = "timer";
     document.getElementById("gameWpm").textContent = "0";
     document.getElementById("gameAccuracy").textContent = "100%";
     document.getElementById("progressFill").style.width = "0%";
 
-    renderTextDisplay(settings.text, [], 0);
+    renderTextDisplay(settings.text);
     document.getElementById("startHint").style.display = "block";
     document.getElementById("pauseOverlay").style.display = "none";
     document.getElementById("focusOverlay").style.display = "none";
   }
 
-  function renderTextDisplay(text, typed, currentIndex) {
+  // One <span> per character. A line break is shown as a return arrow
+  // followed by a real <br>; a space stays a real space (not &nbsp;) so the
+  // browser can wrap lines between words (.text-display is pre-wrap).
+  function charHtml(char, index, cls) {
+    if (char === "\n") return `<span class="${cls}" data-index="${index}">\u21b5</span><br>`;
+    if (char === " ") return `<span class="${cls}" data-index="${index}"> </span>`;
+    return `<span class="${cls}" data-index="${index}">${escapeHtml(char)}</span>`;
+  }
+
+  // Draws a fresh round: every character untyped, the first one current.
+  function renderTextDisplay(text) {
     const container = document.getElementById("textDisplay");
     let html = "";
     for (let i = 0; i < text.length; i++) {
-      let cls = "char-untyped";
-      let char = text[i];
-      if (i < currentIndex) {
-        if (typed[i] && typed[i].correct) {
-          cls = "char-correct";
-        } else {
-          cls = "char-incorrect";
-        }
-      } else if (i === currentIndex) {
-        cls = "char-current";
-      }
-      if (char === "\n") {
-        html += `<span class="${cls}" data-index="${i}">\u21b5</span><br>`;
-      } else if (char === " ") {
-        html += `<span class="${cls}" data-index="${i}">&nbsp;</span>`;
-      } else {
-        html += `<span class="${cls}" data-index="${i}">${escapeHtml(char)}</span>`;
-      }
+      html += charHtml(text[i], i, i === 0 ? "char-current" : "char-untyped");
     }
     container.innerHTML = html;
+    container.scrollTop = 0;
+    charSpans = Array.from(container.querySelectorAll("span[data-index]"));
+    renderedIndex = 0;
     ensureCaret(container);
-    positionCaret(container, currentIndex, true);
-    scrollToCurrentChar(currentIndex);
+    positionCaret(container, 0, true);
+  }
+
+  // Adds the characters of `extra` (which start at `startIndex` in the
+  // round's text) after the existing ones, without redrawing anything.
+  function appendTextDisplay(extra, startIndex) {
+    const container = document.getElementById("textDisplay");
+    const template = document.createElement("template");
+    let html = "";
+    for (let i = 0; i < extra.length; i++) {
+      html += charHtml(extra[i], startIndex + i, "char-untyped");
+    }
+    template.innerHTML = html;
+    const added = Array.from(template.content.querySelectorAll("span[data-index]"));
+    container.insertBefore(template.content, caretEl);
+    charSpans = charSpans.concat(added);
   }
 
   function ensureCaret(container) {
@@ -201,7 +306,7 @@ const App = (() => {
   // for the very first paint so the caret doesn't slide in from (0,0).
   function positionCaret(container, index, instant) {
     if (!caretEl) return;
-    const target = container.querySelector(`span[data-index="${index}"]`);
+    const target = charSpans[index];
     if (!target) {
       caretEl.classList.remove("visible");
       return;
@@ -222,7 +327,7 @@ const App = (() => {
 
   function scrollToCurrentChar(index) {
     const container = document.getElementById("textDisplay");
-    const current = container.querySelector(".char-current");
+    const current = charSpans[index];
     if (!current) return;
     const containerRect = container.getBoundingClientRect();
     const charRect = current.getBoundingClientRect();
@@ -234,31 +339,41 @@ const App = (() => {
   }
 
   function updateGameUI(state) {
+    topUpText(state);
+
     const timerEl = document.getElementById("gameTimer");
+    let progress;
     if (state.timedMode) {
       const remaining = Math.max(0, state.duration - state.elapsed);
       timerEl.textContent = formatTime(Math.ceil(remaining));
       timerEl.className = "timer" + (remaining <= 5 ? " timer-danger" : remaining <= 10 ? " timer-warning" : "");
+      // A timed test is over when the time is, so the bar follows the clock.
+      progress = (state.elapsed / state.duration) * 100;
     } else {
       timerEl.textContent = formatTime(Math.floor(state.elapsed));
+      progress = (state.currentIndex / state.chars.length) * 100;
     }
 
     document.getElementById("gameWpm").textContent = state.wpm;
     document.getElementById("gameAccuracy").textContent = state.accuracy + "%";
-
-    const progress = (state.currentIndex / state.chars.length) * 100;
     document.getElementById("progressFill").style.width = progress + "%";
 
     updateCharDisplay(state);
-    checkWpmMilestone(state.wpm);
+    checkWpmMilestone(state);
   }
 
   // Subtle pulse on the live WPM readout when the player crosses a speed
   // milestone. Purely decorative, so it's skipped entirely under
   // prefers-reduced-motion rather than just relying on the CSS gate.
-  function checkWpmMilestone(wpm) {
+  function checkWpmMilestone(state) {
     if (prefersReducedMotion()) return;
-    const hit = WPM_MILESTONES.find(m => wpm >= m && lastWpmMilestone < m);
+    // WPM over the first few keystrokes is enormous (one key in 12 ms reads
+    // as about 1000 WPM), which used to set off every milestone in the
+    // first tenth of a second and leave none for the rest of the round.
+    if (state.elapsed < MILESTONE_MIN_SECONDS) return;
+    // The highest milestone reached, so a fast start pulses once, not once
+    // per milestone passed.
+    const hit = WPM_MILESTONES.filter(m => state.wpm >= m && lastWpmMilestone < m).pop();
     if (!hit) return;
     lastWpmMilestone = hit;
     const liveStat = document.getElementById("gameWpm").closest(".live-stat");
@@ -268,119 +383,246 @@ const App = (() => {
     liveStat.classList.add("milestone-pulse");
   }
 
+  function charClass(state, i) {
+    if (i < state.currentIndex) {
+      return state.typed[i] && state.typed[i].correct ? "char-correct" : "char-incorrect";
+    }
+    return i === state.currentIndex ? "char-current" : "char-untyped";
+  }
+
+  // Runs on every keystroke and every frame, so it only touches the
+  // characters between where the cursor was at the last paint and where it
+  // is now. Everything outside that range already has the right class.
+  // (Rewriting every character's class each time cost about twice as much
+  // per keystroke: 14 ms against 7 ms on a 10,000-character text. What is
+  // left is the browser laying the text out again when the underlined
+  // current character moves.)
   function updateCharDisplay(state) {
     const container = document.getElementById("textDisplay");
-    const spans = container.querySelectorAll("span[data-index]");
-
-    spans.forEach(span => {
-      const i = parseInt(span.dataset.index);
-      if (i < state.currentIndex) {
-        if (state.typed[i] && state.typed[i].correct) {
-          span.className = "char-correct";
-        } else {
-          span.className = "char-incorrect";
-        }
-      } else if (i === state.currentIndex) {
-        span.className = "char-current";
-      } else {
-        span.className = "char-untyped";
-      }
-    });
+    const from = Math.min(renderedIndex, state.currentIndex);
+    const to = Math.min(Math.max(renderedIndex, state.currentIndex), charSpans.length - 1);
+    for (let i = from; i <= to; i++) {
+      charSpans[i].className = charClass(state, i);
+    }
+    renderedIndex = state.currentIndex;
 
     positionCaret(container, state.currentIndex, false);
     scrollToCurrentChar(state.currentIndex);
   }
 
   function focusGame() {
-    const handler = document.getElementById("gameInputHandler");
-    handler.focus();
-    bindGameInput();
+    document.getElementById("gameInputHandler").focus();
   }
 
+  // True while a round is on screen and not over.
+  function roundIsLive() {
+    const state = GameEngine.getState();
+    return currentView === "game" && !!state && !state.isFinished;
+  }
+
+  // Buttons, links and form fields other than the hidden typing field.
+  function isOtherControl(target) {
+    const handler = document.getElementById("gameInputHandler");
+    return target !== handler && target instanceof Element &&
+      !!target.closest("button, a[href], input, textarea, select");
+  }
+
+  // Bound once for the lifetime of the page. Keys are read at document
+  // level, so typing keeps working when the hidden typing field has lost
+  // focus (a click on the page, Tab) instead of leaving the game dead.
   function bindGameInput() {
     const handler = document.getElementById("gameInputHandler");
 
-    handler.onkeydown = (e) => {
-      const state = GameEngine.getState();
-      if (!state || state.isFinished) return;
-
-      if (e.key === "Escape") {
-        e.preventDefault();
-        togglePause();
-        return;
-      }
-
-      if (GameEngine.isPausedState()) return;
-
-      document.getElementById("startHint").style.display = "none";
-
-      if (e.key === "Backspace") {
-        e.preventDefault();
-        GameEngine.handleBackspace();
-        playSound("click");
-        return;
-      }
-
-      if (e.key === "Tab" && currentSettings.mode === "code") {
-        e.preventDefault();
-        const s = GameEngine.getState();
-        const upcoming = s.text.substring(s.currentIndex);
-        if (upcoming.startsWith("  ")) {
-          GameEngine.handleInput(" ");
-          GameEngine.handleInput(" ");
-        } else {
-          GameEngine.handleInput("\t");
-        }
-        return;
-      }
-
-      if (e.key === "Enter") {
-        e.preventDefault();
-        GameEngine.handleInput("\n");
-        return;
-      }
-
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        const s = GameEngine.getState();
-        const expected = s.chars[s.currentIndex];
-        GameEngine.handleInput(e.key);
-        if (e.key !== expected) {
-          playSound("error");
-        } else {
-          playSound("click");
-        }
-      }
-    };
-
-    handler.addEventListener("blur", () => {
-      const state = GameEngine.getState();
-      if (state && state.isRunning && !state.isFinished && !GameEngine.isPausedState()) {
-        document.getElementById("focusOverlay").style.display = "flex";
-      }
-    });
-
-    document.getElementById("focusOverlay").addEventListener("click", () => {
-      document.getElementById("focusOverlay").style.display = "none";
-      handler.focus();
-    });
-
+    // One listener, so a key belongs to the view that was showing when it
+    // was pressed (the Enter that restarts from the results screen must not
+    // also be typed into the new round).
     document.addEventListener("keydown", (e) => {
-      if (currentView === "game" && document.getElementById("focusOverlay").style.display === "flex") {
-        document.getElementById("focusOverlay").style.display = "none";
-        handler.focus();
-      }
+      if (currentView === "game") onGameKeydown(e);
+      else if (currentView === "results") onResultsKeydown(e);
+    });
+
+    // Losing the typing field mid-round stops the clock until the player
+    // comes back, so time away is not counted as typing time.
+    handler.addEventListener("blur", pauseForLostFocus);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) pauseForLostFocus();
+    });
+    document.getElementById("focusOverlay").addEventListener("click", returnToTyping);
+
+    // The text rewraps when the window is resized or a phone is rotated.
+    // While a round is running every frame re-places the caret; this covers
+    // the times no frame runs (before the first key, or while paused).
+    window.addEventListener("resize", () => {
+      if (!roundIsLive()) return;
+      positionCaret(document.getElementById("textDisplay"), GameEngine.getState().currentIndex, true);
+    });
+
+    // A click on the game itself (the text, the stats bar) must not take
+    // focus away from the typing field.
+    views.game.addEventListener("mousedown", (e) => {
+      if (!roundIsLive() || isOtherControl(e.target)) return;
+      if (e.target.closest("#pauseOverlay, #focusOverlay")) return;
+      e.preventDefault();
+      if (!GameEngine.isPausedState()) handler.focus();
     });
   }
 
+  function onGameKeydown(e) {
+    if (!roundIsLive()) return;
+    const handler = document.getElementById("gameInputHandler");
+    const onOtherControl = isOtherControl(e.target);
+
+    // Pause menu open: Escape resumes, every other key belongs to its buttons.
+    if (GameEngine.isPausedState() && !blurPaused) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        togglePause();
+      }
+      return;
+    }
+
+    // A keyboard user operating a button or link (nav, sound toggle).
+    if (onOtherControl && (e.key === "Tab" || e.key === "Enter" || e.key === " ")) return;
+
+    // "Press any key to continue": the key wakes the round up and is not
+    // typed. Bare modifier keys (Alt from Alt+Tab, Shift) do not count.
+    if (blurPaused) {
+      if (["Shift", "Control", "Alt", "AltGraph", "Meta", "CapsLock"].includes(e.key)) return;
+      e.preventDefault();
+      returnToTyping();
+      return;
+    }
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      togglePause();
+      return;
+    }
+
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      takeTypingFocus(handler);
+      GameEngine.handleBackspace();
+      playSound("click");
+      return;
+    }
+
+    if (e.key === "Tab" && currentSettings.mode === "code") {
+      e.preventDefault();
+      takeTypingFocus(handler);
+      const s = GameEngine.getState();
+      const upcoming = s.text.substring(s.currentIndex);
+      if (upcoming.startsWith("  ")) {
+        GameEngine.handleInput(" ");
+        GameEngine.handleInput(" ");
+      } else {
+        GameEngine.handleInput("\t");
+      }
+      return;
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      takeTypingFocus(handler);
+      GameEngine.handleInput("\n");
+      return;
+    }
+
+    if (isCharacterKey(e)) {
+      e.preventDefault();
+      takeTypingFocus(handler);
+      const s = GameEngine.getState();
+      const expected = s.chars[s.currentIndex];
+      GameEngine.handleInput(e.key);
+      if (e.key !== expected) {
+        playSound("error");
+      } else {
+        playSound("click");
+      }
+    }
+  }
+
+  // True for a key press that types a character rather than triggering a
+  // shortcut. Many keyboard layouts reach characters such as { } [ ] @ \ | ~
+  // through AltGr, which Windows reports as Ctrl+Alt held together, or
+  // through Option on a Mac, which reports Alt. Treating every Ctrl or Alt
+  // press as a shortcut made those characters impossible to type, which
+  // rules out Code mode on German, French, Spanish, Turkish, Nordic and
+  // many other layouts. Ctrl or Cmd alone, and Alt outside macOS (where it
+  // opens browser menus), remain shortcuts.
+  function isCharacterKey(e) {
+    if (e.key.length !== 1 || e.metaKey) return false;
+    if (e.getModifierState("AltGraph") || (e.ctrlKey && e.altKey)) return true;
+    if (e.ctrlKey) return false;
+    if (e.altKey) return IS_MAC;
+    return true;
+  }
+
+  // Results screen: Enter starts the same kind of round again, Escape goes
+  // back to the mode list. Both are ignored for a moment after the results
+  // appear, because a player who was still typing when the time ran out
+  // would otherwise restart or leave by accident.
+  function onResultsKeydown(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+    if (performance.now() - resultsShownAt < RESULTS_KEY_GUARD_MS) return;
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      leaveGame();
+      showView("home");
+    } else if (e.key === "Enter" && !isOtherControl(e.target)) {
+      // (a focused button or link handles its own Enter)
+      e.preventDefault();
+      tryAgain();
+    }
+  }
+
+  // A new round with the settings of the last one: new words or quotes, or
+  // the same custom text.
+  function tryAgain() {
+    currentSettings.text = newRoundText(currentSettings);
+    startGame(currentSettings);
+  }
+
+  // Called for every key that is typed into the round.
+  function takeTypingFocus(handler) {
+    document.getElementById("startHint").style.display = "none";
+    if (document.activeElement !== handler) handler.focus();
+  }
+
+  function pauseForLostFocus() {
+    if (!roundIsLive()) return;
+    const state = GameEngine.getState();
+    if (!state.isRunning || GameEngine.isPausedState()) return;
+    GameEngine.pause();
+    blurPaused = true;
+    document.getElementById("focusOverlay").style.display = "flex";
+  }
+
+  function returnToTyping() {
+    document.getElementById("focusOverlay").style.display = "none";
+    if (blurPaused) {
+      blurPaused = false;
+      GameEngine.resume();
+    }
+    document.getElementById("gameInputHandler").focus();
+  }
+
+  // Escape: open or close the pause menu. Before the first keystroke there
+  // is no clock to stop, so there is nothing to pause.
   function togglePause() {
+    const state = GameEngine.getState();
+    if (!state || state.isFinished) return;
+
     if (GameEngine.isPausedState()) {
       GameEngine.resume();
       document.getElementById("pauseOverlay").style.display = "none";
       document.getElementById("gameInputHandler").focus();
-    } else {
+    } else if (state.isRunning) {
       GameEngine.pause();
       document.getElementById("pauseOverlay").style.display = "flex";
+      // Keyboard users land on Resume and can Tab to Quit.
+      document.getElementById("pauseResume").focus();
     }
   }
 
@@ -393,28 +635,29 @@ const App = (() => {
     const container = document.getElementById("resultsContent");
     Results.render(results, container);
     showView("results");
+    resultsShownAt = performance.now();
 
-    document.getElementById("tryAgainBtn").addEventListener("click", () => {
-      if (currentSettings.mode === "words") {
-        currentSettings.text = TextContent.generateWords(currentSettings.wordCount);
-      } else if (currentSettings.mode === "classic") {
-        currentSettings.text = TextContent.getClassicText(currentSettings.difficulty);
-      } else if (currentSettings.mode === "code") {
-        currentSettings.text = TextContent.getCodeSnippet(currentSettings.language);
-      }
-      startGame(currentSettings);
-    });
+    document.getElementById("tryAgainBtn").addEventListener("click", tryAgain);
 
     document.getElementById("newModeBtn").addEventListener("click", () => {
-      GameEngine.destroy();
+      leaveGame();
       showView("home");
     });
 
     document.getElementById("saveBtn").addEventListener("click", () => {
-      Leaderboard.addEntry(results);
-      showToast("Score saved to leaderboard!");
-      document.getElementById("saveBtn").disabled = true;
-      document.getElementById("saveBtn").textContent = "Saved!";
+      const saveBtn = document.getElementById("saveBtn");
+      const outcome = Leaderboard.addEntry(results);
+      if (outcome.saved) {
+        showToast("Score saved to leaderboard!");
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saved!";
+      } else if (outcome.reason === "not-fast-enough") {
+        showToast(`Not saved: the leaderboard keeps your ${Leaderboard.MAX_ENTRIES} fastest ${results.mode} runs, and this one was slower.`);
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Not saved";
+      }
+      // reason "storage": SaveData has already told the player why. The
+      // button stays enabled so they can try again.
     });
 
     playSound("complete");
@@ -432,13 +675,13 @@ const App = (() => {
       let html = `
         <div class="lb-filters">
           ${["all", "classic", "code", "words", "custom"].map(f =>
-            `<button class="lb-filter ${currentFilter === f ? "active" : ""}" data-filter="${f}">${f.charAt(0).toUpperCase() + f.slice(1)}</button>`
+            `<button class="lb-filter ${currentFilter === f ? "active" : ""}" data-filter="${f}" aria-pressed="${currentFilter === f}">${f.charAt(0).toUpperCase() + f.slice(1)}</button>`
           ).join("")}
         </div>
         <div class="lb-sort">
           Sort by:
           ${["wpm", "accuracy", "date"].map(s =>
-            `<button class="lb-sort-btn ${currentSort === s ? "active" : ""}" data-sort="${s}">${s.charAt(0).toUpperCase() + s.slice(1)}</button>`
+            `<button class="lb-sort-btn ${currentSort === s ? "active" : ""}" data-sort="${s}" aria-pressed="${currentSort === s}">${s.charAt(0).toUpperCase() + s.slice(1)}</button>`
           ).join("")}
         </div>
       `;
@@ -457,13 +700,15 @@ const App = (() => {
           </div>
           ${entries.map((e, i) => {
             const isBest = Object.values(bestByMode).some(b => b.date === e.date && b.wpm === e.wpm);
-            return `<div class="lb-row ${isBest ? "lb-best" : ""}" style="animation-delay: ${i * 0.03}s">
+            // The stagger stops growing after 30 rows: a full board (50 per
+            // mode) would otherwise keep its last rows hidden for seconds.
+            return `<div class="lb-row ${isBest ? "lb-best" : ""}" style="animation-delay: ${Math.min(i, 30) * 0.03}s">
               <span class="lb-rank">${i + 1}</span>
               <span class="lb-wpm">${e.wpm}</span>
               <span class="lb-acc">${e.accuracy}%</span>
-              <span class="lb-mode">${e.mode}${e.difficulty ? " \u00b7 " + e.difficulty : ""}${e.language ? " \u00b7 " + e.language : ""}</span>
+              <span class="lb-mode">${escapeHtml(Results.describeRound(e).toLowerCase())}</span>
               <span class="lb-dur">${e.duration}s</span>
-              <span class="lb-date">${new Date(e.date).toLocaleDateString()}</span>
+              <span class="lb-date">${e.date ? new Date(e.date).toLocaleDateString() : "\u2014"}</span>
             </div>`;
           }).join("")}
         </div>`;
@@ -488,9 +733,10 @@ const App = (() => {
 
       document.getElementById("clearLbBtn").addEventListener("click", () => {
         if (confirm("Are you sure you want to clear the leaderboard? This cannot be undone.")) {
-          Leaderboard.clear();
-          render();
-          showToast("Leaderboard cleared.");
+          if (Leaderboard.clear()) {
+            render();
+            showToast("Leaderboard cleared.");
+          }
         }
       });
     }
@@ -570,9 +816,9 @@ const App = (() => {
   document.addEventListener("DOMContentLoaded", init);
 
   document.getElementById("pauseResume")?.addEventListener("click", togglePause);
+  document.getElementById("pauseRestart")?.addEventListener("click", tryAgain);
   document.getElementById("pauseQuit")?.addEventListener("click", () => {
-    GameEngine.destroy();
-    document.getElementById("pauseOverlay").style.display = "none";
+    leaveGame();
     showView("home");
   });
 
