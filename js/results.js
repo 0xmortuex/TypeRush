@@ -228,7 +228,8 @@ const Results = (() => {
     return "Keep practicing!";
   }
 
-  // "Classic \u00b7 hard", "Code \u00b7 rust", "Words \u00b7 50 words", "Custom".
+  // The mode and its one relevant setting, joined by a middle dot:
+  // Classic + hard, Code + rust, Words + 50 words, or just Custom.
   // Used for the game header, the results subtitle and leaderboard rows so
   // a round reads the same everywhere. Only the detail that belongs to the
   // mode is shown: difficulty is a Classic setting, language a Code one.

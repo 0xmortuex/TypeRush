@@ -449,6 +449,14 @@ const App = (() => {
     });
     document.getElementById("focusOverlay").addEventListener("click", returnToTyping);
 
+    // The text rewraps when the window is resized or a phone is rotated.
+    // While a round is running every frame re-places the caret; this covers
+    // the times no frame runs (before the first key, or while paused).
+    window.addEventListener("resize", () => {
+      if (!roundIsLive()) return;
+      positionCaret(document.getElementById("textDisplay"), GameEngine.getState().currentIndex, true);
+    });
+
     // A click on the game itself (the text, the stats bar) must not take
     // focus away from the typing field.
     views.game.addEventListener("mousedown", (e) => {
