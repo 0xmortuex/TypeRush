@@ -18,34 +18,47 @@ const Achievements = (() => {
     { id: "dedicated", icon: "\ud83c\udf1f", title: "Dedicated", description: "Complete 25 total tests", check: (r, s) => s.totalTests >= 25 }
   ];
 
+  // The list of unlocked achievement ids. Anything that is not a list of
+  // ids is reported and treated as "nothing unlocked yet".
   function loadUnlocked() {
-    try {
-      const data = localStorage.getItem(STORAGE_KEY);
-      return data ? JSON.parse(data) : [];
-    } catch {
+    const stored = SaveData.read(STORAGE_KEY, []);
+    if (!Array.isArray(stored)) {
+      SaveData.report("Saved achievements were damaged and could not be loaded.");
       return [];
     }
+    return stored.filter(id => typeof id === "string");
   }
 
   function saveUnlocked(unlocked) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(unlocked));
-    } catch { /* ignore */ }
+    return SaveData.write(STORAGE_KEY, unlocked);
   }
 
+  // The running counts behind the "complete N tests" achievements. A count
+  // that is missing starts at 0. A count that is present but not a number
+  // (a broken value would otherwise turn into NaN on the next test and
+  // stay that way for good) is reported and restarted at 0.
   function loadStats() {
-    try {
-      const data = localStorage.getItem(STATS_KEY);
-      return data ? JSON.parse(data) : { totalTests: 0, codeTests: 0, classicTests: 0, highAccuracyCount: 0 };
-    } catch {
-      return { totalTests: 0, codeTests: 0, classicTests: 0, highAccuracyCount: 0 };
+    const stats = { totalTests: 0, codeTests: 0, classicTests: 0, highAccuracyCount: 0 };
+    const stored = SaveData.read(STATS_KEY, null);
+    if (stored === null) return stats;
+    if (typeof stored !== "object" || Array.isArray(stored)) {
+      SaveData.report("Saved test counts were damaged and have been restarted.");
+      return stats;
     }
+    Object.keys(stats).forEach(key => {
+      const value = stored[key];
+      if (value === undefined) return;
+      if (Number.isFinite(value) && value >= 0) {
+        stats[key] = Math.floor(value);
+      } else {
+        SaveData.report("Saved test counts were damaged and have been restarted.");
+      }
+    });
+    return stats;
   }
 
   function saveStats(stats) {
-    try {
-      localStorage.setItem(STATS_KEY, JSON.stringify(stats));
-    } catch { /* ignore */ }
+    return SaveData.write(STATS_KEY, stats);
   }
 
   function updateStats(result) {

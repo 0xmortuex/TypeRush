@@ -6,8 +6,10 @@ const UNLOCKED_KEY = "typerush_achievements";
 const STATS_KEY = "typerush_stats";
 
 function setup(storage = {}) {
-  const env = createBrowserEnv({ scripts: ["achievements.js"], storage });
-  return { env, ach: env.get("Achievements") };
+  const env = createBrowserEnv({ scripts: ["storage.js", "achievements.js"], storage });
+  const problems = [];
+  env.get("SaveData").setProblemHandler(message => problems.push(message));
+  return { env, ach: env.get("Achievements"), problems };
 }
 
 // A result object as the engine produces it.
@@ -88,4 +90,93 @@ test("speed, accuracy and consistency achievements", () => {
   assert.deepEqual(ids(ach.checkUnlocks(result({ wpm: 100, accuracy: 97 }))), ["century_club"]);
   assert.deepEqual(ids(ach.checkUnlocks(result({ accuracy: 100, mistakes: 0 }))), ["perfectionist"]);
   assert.deepEqual(ids(ach.checkUnlocks(result({ consistency: "Excellent" }))), ["consistent"]);
+});
+
+// ---------------------------------------------------------------------------
+// Damaged or unexpected saved data. Before this was handled, a damaged
+// achievements list stopped the results screen from appearing, and a damaged
+// counter became NaN and never recovered.
+// ---------------------------------------------------------------------------
+
+for (const [label, stored] of [
+  ["an object instead of a list", "{}"],
+  ["the JSON value null", "null"],
+  ["text that is not JSON", "[first_steps"]
+]) {
+  test(`damaged achievements (${label}) are reported and a round can still finish`, () => {
+    const { env, ach, problems } = setup({ [UNLOCKED_KEY]: stored });
+    assert.equal(env.plain(ach.getAll()).filter(a => a.unlocked).length, 0);
+    assert.deepEqual(ids(ach.checkUnlocks(result())), ["first_steps"]);
+    assert.deepEqual(env.storage.getJson(UNLOCKED_KEY), ["first_steps"], "a clean list is written by the unlock");
+    assert.equal(problems.length, 1);
+  });
+}
+
+test("entries in the unlocked list that are not ids are ignored", () => {
+  const { env, ach } = setup({ [UNLOCKED_KEY]: JSON.stringify([1, "speed_demon", null, { id: "x" }, "first_steps"]) });
+  assert.deepEqual(env.plain(ach.getAll()).filter(a => a.unlocked).map(a => a.id), ["first_steps", "speed_demon"]);
+});
+
+test("an id the app does not know is kept when the list is saved", () => {
+  const { env, ach } = setup({ [UNLOCKED_KEY]: JSON.stringify(["someday_maybe"]) });
+  ach.checkUnlocks(result());
+  assert.deepEqual(env.storage.getJson(UNLOCKED_KEY), ["someday_maybe", "first_steps"]);
+});
+
+test("counts saved as {} start from zero and are written back as numbers", () => {
+  // The old code turned this into {"totalTests":null,"highAccuracyCount":null}.
+  const { env, ach, problems } = setup({ [STATS_KEY]: "{}" });
+  assert.deepEqual(ids(ach.checkUnlocks(result({ accuracy: 99 }))), ["first_steps"]);
+  assert.deepEqual(env.storage.getJson(STATS_KEY), { totalTests: 1, codeTests: 0, classicTests: 1, highAccuracyCount: 1 });
+  assert.deepEqual(problems, []);
+});
+
+test("counts already broken by the old code are repaired and reported", () => {
+  const { env, ach, problems } = setup({
+    [UNLOCKED_KEY]: JSON.stringify(["first_steps"]),
+    [STATS_KEY]: '{"totalTests":null,"codeTests":4,"classicTests":2,"highAccuracyCount":null}'
+  });
+  assert.deepEqual(ids(ach.checkUnlocks(result({ mode: "code", language: "css" }))), ["code_monkey"]);
+  assert.deepEqual(env.storage.getJson(STATS_KEY), { totalTests: 1, codeTests: 5, classicTests: 2, highAccuracyCount: 0 });
+  assert.deepEqual(problems, ["Saved test counts were damaged and have been restarted."]);
+});
+
+for (const [label, stored, reported] of [
+  ["a list", "[]", true],
+  ["a string", '"7"', true],
+  ["text that is not JSON", "{totalTests:", true],
+  ["the JSON value null", "null", false]
+]) {
+  test(`counts saved as ${label} restart at zero`, () => {
+    const { env, ach, problems } = setup({ [STATS_KEY]: stored });
+    ach.checkUnlocks(result());
+    assert.deepEqual(env.storage.getJson(STATS_KEY), { totalTests: 1, codeTests: 0, classicTests: 1, highAccuracyCount: 0 });
+    assert.equal(problems.length, reported ? 1 : 0);
+  });
+}
+
+test("fractional and negative counts are made whole", () => {
+  const { env, ach, problems } = setup({ [STATS_KEY]: JSON.stringify({ totalTests: 3.7, codeTests: -2, classicTests: 1, highAccuracyCount: "4" }) });
+  ach.checkUnlocks(result({ mode: "words" }));
+  assert.deepEqual(env.storage.getJson(STATS_KEY), { totalTests: 4, codeTests: 0, classicTests: 1, highAccuracyCount: 0 });
+  assert.deepEqual(problems, ["Saved test counts were damaged and have been restarted."]);
+});
+
+test("when nothing can be written the unlock is still announced and the failure reported", () => {
+  const { env, ach, problems } = setup();
+  env.storage.failWrites();
+  assert.deepEqual(ids(ach.checkUnlocks(result())), ["first_steps"]);
+  // one failed write for the counts, one for the unlocked list
+  assert.deepEqual(problems, [
+    "Could not save: your browser's storage is full or blocked.",
+    "Could not save: your browser's storage is full or blocked."
+  ]);
+});
+
+test("with storage blocked entirely a round can still finish", () => {
+  const { env, ach, problems } = setup();
+  env.storage.block();
+  assert.deepEqual(ids(ach.checkUnlocks(result())), ["first_steps"]);
+  assert.equal(env.plain(ach.getAll()).length, 10);
+  assert.equal(problems[0], "Your browser is blocking saved data, so scores and achievements cannot be loaded.");
 });

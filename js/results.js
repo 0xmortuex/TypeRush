@@ -178,7 +178,7 @@ const Results = (() => {
       : "";
 
     let errorLabel = `${result.mistakes} ${result.mistakes === 1 ? "error" : "errors"}`;
-    if (result.incorrectCount > 0) errorLabel += ` · ${result.incorrectCount} uncorrected`;
+    if (result.incorrectCount > 0) errorLabel += ` \u00b7 ${result.incorrectCount} uncorrected`;
 
     return `
       <div class="char-breakdown">

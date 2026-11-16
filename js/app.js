@@ -42,6 +42,17 @@ const App = (() => {
   let blurPaused = false;
 
   function init() {
+    // A problem with saved data (blocked or full storage, a damaged value)
+    // is shown to the player and logged, never swallowed.
+    SaveData.setProblemHandler((message, error) => {
+      if (error) console.error(`[TypeRush] ${message}`, error);
+      else console.error(`[TypeRush] ${message}`);
+      // One round can fail to save twice (counts, then achievements): the
+      // console gets both, the player sees the message once at a time.
+      const showing = Array.from(document.getElementById("toastContainer").children);
+      if (!showing.some(toast => toast.textContent === message)) showToast(message);
+    });
+
     cacheViews();
     bindNav();
     bindModeCards();
@@ -221,7 +232,7 @@ const App = (() => {
   // followed by a real <br>; a space stays a real space (not &nbsp;) so the
   // browser can wrap lines between words (.text-display is pre-wrap).
   function charHtml(char, index, cls) {
-    if (char === "\n") return `<span class="${cls}" data-index="${index}">↵</span><br>`;
+    if (char === "\n") return `<span class="${cls}" data-index="${index}">\u21b5</span><br>`;
     if (char === " ") return `<span class="${cls}" data-index="${index}"> </span>`;
     return `<span class="${cls}" data-index="${index}">${escapeHtml(char)}</span>`;
   }
@@ -551,10 +562,19 @@ const App = (() => {
     });
 
     document.getElementById("saveBtn").addEventListener("click", () => {
-      Leaderboard.addEntry(results);
-      showToast("Score saved to leaderboard!");
-      document.getElementById("saveBtn").disabled = true;
-      document.getElementById("saveBtn").textContent = "Saved!";
+      const saveBtn = document.getElementById("saveBtn");
+      const outcome = Leaderboard.addEntry(results);
+      if (outcome.saved) {
+        showToast("Score saved to leaderboard!");
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saved!";
+      } else if (outcome.reason === "not-fast-enough") {
+        showToast(`Not saved: the leaderboard keeps your ${Leaderboard.MAX_ENTRIES} fastest ${results.mode} runs, and this one was slower.`);
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Not saved";
+      }
+      // reason "storage": SaveData has already told the player why. The
+      // button stays enabled so they can try again.
     });
 
     playSound("complete");
@@ -597,13 +617,15 @@ const App = (() => {
           </div>
           ${entries.map((e, i) => {
             const isBest = Object.values(bestByMode).some(b => b.date === e.date && b.wpm === e.wpm);
-            return `<div class="lb-row ${isBest ? "lb-best" : ""}" style="animation-delay: ${i * 0.03}s">
+            // The stagger stops growing after 30 rows: a full board (50 per
+            // mode) would otherwise keep its last rows hidden for seconds.
+            return `<div class="lb-row ${isBest ? "lb-best" : ""}" style="animation-delay: ${Math.min(i, 30) * 0.03}s">
               <span class="lb-rank">${i + 1}</span>
               <span class="lb-wpm">${e.wpm}</span>
               <span class="lb-acc">${e.accuracy}%</span>
               <span class="lb-mode">${escapeHtml(Results.describeRound(e).toLowerCase())}</span>
               <span class="lb-dur">${e.duration}s</span>
-              <span class="lb-date">${new Date(e.date).toLocaleDateString()}</span>
+              <span class="lb-date">${e.date ? new Date(e.date).toLocaleDateString() : "\u2014"}</span>
             </div>`;
           }).join("")}
         </div>`;
@@ -628,9 +650,10 @@ const App = (() => {
 
       document.getElementById("clearLbBtn").addEventListener("click", () => {
         if (confirm("Are you sure you want to clear the leaderboard? This cannot be undone.")) {
-          Leaderboard.clear();
-          render();
-          showToast("Leaderboard cleared.");
+          if (Leaderboard.clear()) {
+            render();
+            showToast("Leaderboard cleared.");
+          }
         }
       });
     }

@@ -17,8 +17,10 @@ const OLD_SHAPE = [
 
 function setup(stored) {
   const storage = stored === undefined ? {} : { [KEY]: typeof stored === "string" ? stored : JSON.stringify(stored) };
-  const env = createBrowserEnv({ scripts: ["leaderboard.js"], storage });
-  return { env, lb: env.get("Leaderboard") };
+  const env = createBrowserEnv({ scripts: ["storage.js", "leaderboard.js"], storage });
+  const problems = [];
+  env.get("SaveData").setProblemHandler(message => problems.push(message));
+  return { env, lb: env.get("Leaderboard"), problems };
 }
 
 // A result object as the engine produces it today.
@@ -111,7 +113,145 @@ test("filtering and sorting", () => {
 
 test("clear removes the stored leaderboard", () => {
   const { env, lb } = setup(OLD_SHAPE);
-  lb.clear();
+  assert.equal(lb.clear(), true);
   assert.equal(env.storage.get(KEY), null);
   assert.deepEqual(env.plain(lb.load()), []);
+});
+
+// ---------------------------------------------------------------------------
+// Damaged or unexpected saved data. Before this was handled, any of these
+// values made the results screen fail to appear at the end of a round.
+// ---------------------------------------------------------------------------
+
+const GOOD = OLD_SHAPE[2]; // classic, easy, 61 WPM
+
+for (const [label, stored, expectedProblem] of [
+  ["the JSON value null", "null", "The saved leaderboard was damaged and could not be loaded."],
+  ["an object instead of a list", "{}", "The saved leaderboard was damaged and could not be loaded."],
+  ["a number", "42", "The saved leaderboard was damaged and could not be loaded."],
+  ["text that is not JSON", "{not json", 'Saved data "typerush_leaderboard" could not be read and was ignored.'],
+  ["a list holding only null", "[null]", "1 damaged leaderboard entry was skipped."]
+]) {
+  test(`damaged leaderboard (${label}) loads as empty, is reported, and breaks nothing`, () => {
+    const { env, lb, problems } = setup(stored);
+    assert.deepEqual(env.plain(lb.load()), []);
+    assert.deepEqual(env.plain(lb.getFiltered("all", "wpm")), []);
+    assert.deepEqual(env.plain(lb.getBestByMode()), {});
+    assert.equal(lb.isPersonalBest(result()), true);
+    assert.equal(lb.getTotalTests(), 0);
+    assert.deepEqual(problems, [expectedProblem], "reported exactly once across all those reads");
+    assert.equal(env.storage.get(KEY), stored, "reading never rewrites what is stored");
+  });
+}
+
+test("usable entries survive next to damaged ones", () => {
+  const { env, lb, problems } = setup([
+    null, 42, "a string", [],
+    { mode: "bogus", wpm: 50, accuracy: 90 },
+    { mode: "classic" },
+    { mode: "classic", wpm: "fast", accuracy: 90 },
+    { mode: "classic", wpm: 50, accuracy: null },
+    GOOD
+  ]);
+  assert.deepEqual(env.plain(lb.load()), [GOOD]);
+  assert.deepEqual(problems, ["8 damaged leaderboard entries were skipped."]);
+  assert.equal(lb.isPersonalBest(result({ difficulty: "easy", wpm: 60 })), false);
+});
+
+test("an entry with missing details is kept with safe values", () => {
+  const { env, lb, problems } = setup([
+    { mode: "code", language: 7, difficulty: "medium", wpm: 44, accuracy: 93, date: "not a date" },
+    GOOD
+  ]);
+  const entries = env.plain(lb.load());
+  assert.deepEqual(entries[0], { mode: "code", language: "", difficulty: "", wpm: 44, accuracy: 93, date: "", duration: 0, rawWpm: 44 });
+  assert.deepEqual(problems, []);
+  // no usable date sorts as oldest
+  assert.deepEqual(env.plain(lb.getFiltered("all", "date")).map(e => e.wpm), [61, 44]);
+});
+
+test("fields the app does not know about are preserved", () => {
+  const { env, lb } = setup([{ ...GOOD, note: "kept", extra: { nested: true } }]);
+  lb.addEntry(result({ wpm: 70 }));
+  const stored = env.storage.getJson(KEY);
+  assert.equal(stored.find(e => e.wpm === 61).note, "kept");
+  assert.deepEqual(stored.find(e => e.wpm === 61).extra, { nested: true });
+});
+
+test("saving over a damaged leaderboard starts a clean one", () => {
+  const { env, lb, problems } = setup("{not json");
+  assert.deepEqual(env.plain(lb.addEntry(result({ wpm: 70 }))), { saved: true });
+  assert.deepEqual(env.storage.getJson(KEY).map(e => e.wpm), [70]);
+  assert.equal(problems.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// The 50-entry limit, and telling the truth about what was saved.
+// ---------------------------------------------------------------------------
+
+// 50 Classic runs from 60 to 109 WPM.
+const FIFTY_CLASSIC = Array.from({ length: 50 }, (_, i) => ({
+  mode: "classic", difficulty: "easy", language: "", duration: 30, wpm: 60 + i, rawWpm: 62 + i,
+  accuracy: 95, consistency: "Good", date: new Date(Date.UTC(2026, 5, 1 + (i % 28))).toISOString(), textPreview: "x"
+}));
+
+test("a slower run in another mode is still saved when 50 faster runs exist", () => {
+  const { env, lb } = setup(FIFTY_CLASSIC);
+  // This used to answer "Score saved!" and then drop the entry.
+  assert.deepEqual(env.plain(lb.addEntry(result({ mode: "custom", difficulty: "", wpm: 49 }))), { saved: true });
+  const stored = env.storage.getJson(KEY);
+  assert.equal(stored.length, 51);
+  assert.equal(stored.filter(e => e.mode === "custom").length, 1);
+  assert.equal(stored.filter(e => e.mode === "classic").length, 50);
+});
+
+test("a run slower than the 50 kept for its mode is refused, and says so", () => {
+  const { env, lb } = setup(FIFTY_CLASSIC);
+  const before = env.storage.get(KEY);
+  assert.deepEqual(env.plain(lb.addEntry(result({ difficulty: "hard", wpm: 59 }))), { saved: false, reason: "not-fast-enough" });
+  assert.equal(env.storage.get(KEY), before, "nothing was written");
+});
+
+test("equalling the slowest kept run does not replace it", () => {
+  const { env, lb } = setup(FIFTY_CLASSIC);
+  assert.deepEqual(env.plain(lb.addEntry(result({ wpm: 60 }))), { saved: false, reason: "not-fast-enough" });
+});
+
+test("a faster run pushes out the slowest of its mode only", () => {
+  const custom = { mode: "custom", difficulty: "", language: "", duration: 9, wpm: 20, rawWpm: 20, accuracy: 90, consistency: "N/A", date: "2026-01-01T00:00:00.000Z", textPreview: "c" };
+  const { env, lb } = setup([...FIFTY_CLASSIC, custom]);
+  assert.deepEqual(env.plain(lb.addEntry(result({ wpm: 75 }))), { saved: true });
+  const stored = env.storage.getJson(KEY);
+  const classic = stored.filter(e => e.mode === "classic");
+  assert.equal(classic.length, 50);
+  assert.equal(Math.min(...classic.map(e => e.wpm)), 61, "the 60 WPM run was dropped");
+  assert.equal(classic.filter(e => e.wpm === 75).length, 2, "the new 75 sits beside the old one");
+  assert.equal(stored.filter(e => e.mode === "custom").length, 1, "the slow Custom run is untouched");
+  assert.equal(lb.MAX_ENTRIES, 50);
+});
+
+test("a full or blocked browser storage is reported, not hidden", () => {
+  const { env, lb, problems } = setup(OLD_SHAPE);
+  env.storage.failWrites();
+  assert.deepEqual(env.plain(lb.addEntry(result({ wpm: 70 }))), { saved: false, reason: "storage" });
+  assert.deepEqual(problems, ["Could not save: your browser's storage is full or blocked."]);
+  assert.equal(env.storage.getJson(KEY).length, 6, "the old leaderboard is intact");
+});
+
+test("with storage blocked entirely the leaderboard is empty and says why", () => {
+  const { env, lb, problems } = setup(OLD_SHAPE);
+  env.storage.block();
+  assert.deepEqual(env.plain(lb.load()), []);
+  assert.equal(lb.isPersonalBest(result()), true);
+  assert.equal(lb.clear(), false);
+  assert.deepEqual(problems, [
+    "Your browser is blocking saved data, so scores and achievements cannot be loaded.",
+    "Could not clear saved data: your browser's storage is blocked."
+  ]);
+});
+
+test("addEntry rejects something that is not a score", () => {
+  const { lb } = setup();
+  assert.throws(() => lb.addEntry(result({ wpm: NaN })), /not a valid score/);
+  assert.throws(() => lb.addEntry(result({ mode: "bogus" })), /not a valid score/);
 });
