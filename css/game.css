@@ -89,7 +89,14 @@
   line-height: 2.2;
   max-height: 55vh;
   overflow-y: auto;
-  padding: 1.5rem 0;
+  overflow-x: hidden;
+  /* Wrap between words but keep every space (code indentation, double
+     spaces). A token longer than a whole line breaks as a last resort.
+     The right padding gives a space that hangs at the end of a full line
+     room for its caret and error highlight. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 1.5rem 1ch 1.5rem 0;
   position: relative;
   mask-image: linear-gradient(
     to bottom,
@@ -191,18 +198,16 @@
   opacity: 0;
 }
 
-/* Start hint */
+/* Start hint — sits in normal flow under the text so it can never cover
+   the words you are about to type, however many lines the text wraps to. */
 .start-hint {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  text-align: center;
+  margin-top: 1rem;
   color: var(--text-muted);
   font-size: 1.1rem;
   font-weight: 500;
   animation: hintPulse 2s ease infinite;
   pointer-events: none;
-  z-index: 5;
 }
 
 @keyframes hintPulse {

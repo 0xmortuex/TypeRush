@@ -174,7 +174,9 @@ const App = (() => {
       if (char === "\n") {
         html += `<span class="${cls}" data-index="${i}">\u21b5</span><br>`;
       } else if (char === " ") {
-        html += `<span class="${cls}" data-index="${i}">&nbsp;</span>`;
+        // A real space (not &nbsp;) so the browser can wrap lines between
+        // words; .text-display uses white-space: pre-wrap to keep it visible.
+        html += `<span class="${cls}" data-index="${i}"> </span>`;
       } else {
         html += `<span class="${cls}" data-index="${i}">${escapeHtml(char)}</span>`;
       }
