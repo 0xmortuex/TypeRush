@@ -318,3 +318,56 @@ test("consistency needs at least two per-second samples", () => {
   assert.equal(box.results.consistency, "N/A");
   assert.equal(box.results.wpmOverTime.length, 0);
 });
+
+test("appendText extends a round in progress", () => {
+  const { env, engine } = setup();
+  engine.init("abc", { mode: "classic", difficulty: "easy", duration: 15 });
+  const box = collectResults(engine);
+
+  engine.handleInput("a");
+  engine.handleInput("b");
+  engine.appendText(" def");
+  assert.equal(engine.getState().text, "abc def");
+  assert.equal(engine.getState().chars.length, 7);
+
+  typeText(env, engine, "c de", 100);
+  assert.equal(box.results, null, "typing past the original end does not finish the round");
+  assert.equal(engine.getState().currentIndex, 6);
+  assert.equal(engine.getState().correctCount, 6);
+});
+
+test("a timed test kept supplied with text runs to the buzzer", () => {
+  const { env, engine } = setup();
+  engine.init("0123456789", { mode: "code", language: "css", duration: 30 });
+  const box = collectResults(engine);
+
+  // the caller tops the text up whenever fewer than 5 characters remain
+  let typed = 0;
+  while (!box.results) {
+    const s = engine.getState();
+    if (s.chars.length - s.currentIndex < 5) engine.appendText("0123456789");
+    engine.handleInput(String(typed % 10));
+    typed++;
+    env.clock.run(100);
+  }
+
+  assert.equal(box.results.duration, 30);
+  assert.equal(box.results.correctCount, 300);
+  assert.equal(box.results.wpm, 120); // (300 / 5) / (30 / 60)
+  assert.equal(box.results.accuracy, 100);
+  assert.equal(box.results.wpmOverTime.length, 30);
+});
+
+test("appendText is ignored once the round is over, and for empty text", () => {
+  const { env, engine } = setup();
+  engine.init("ab", { mode: "custom" });
+  collectResults(engine);
+
+  engine.appendText("");
+  assert.equal(engine.getState().chars.length, 2);
+
+  typeText(env, engine, "ab", 100);
+  assert.equal(engine.getState().isFinished, true);
+  engine.appendText("cd");
+  assert.equal(engine.getState().text, "ab");
+});

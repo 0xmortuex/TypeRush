@@ -206,6 +206,14 @@ const GameEngine = (() => {
     if (onUpdate) onUpdate(state);
   }
 
+  // Adds more text to the end of a round in progress. Timed tests use this
+  // to keep the player supplied until the buzzer.
+  function appendText(extra) {
+    if (!state || state.isFinished || !extra) return;
+    state.text += extra;
+    for (const char of extra.split("")) state.chars.push(char);
+  }
+
   function pause() {
     if (!state || !state.isRunning || isPaused) return;
     isPaused = true;
@@ -306,5 +314,5 @@ const GameEngine = (() => {
     onEnd = null;
   }
 
-  return { init, start, handleInput, handleBackspace, pause, resume, end, setCallbacks, getState, isPausedState, destroy, getResults, computeStats, computeAccuracy };
+  return { init, start, handleInput, handleBackspace, appendText, pause, resume, end, setCallbacks, getState, isPausedState, destroy, getResults, computeStats, computeAccuracy };
 })();

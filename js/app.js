@@ -22,6 +22,21 @@ const App = (() => {
     achievements: null
   };
 
+  // The player of a timed test is never allowed closer than TIMED_LOOKAHEAD
+  // characters to the end of the text: more is added before that happens.
+  // 600 characters is nine or more lines, so it is added below the lines
+  // in view. The opening text is long enough that someone typing
+  // TIMED_CHARS_PER_SECOND for the whole test (16 a second is about
+  // 190 WPM) never needs any added at all.
+  const TIMED_CHARS_PER_SECOND = 16;
+  const TIMED_LOOKAHEAD = 600;
+  let textStream = null;
+
+  // The round on screen: one span per character, and the cursor position
+  // those spans were last painted for.
+  let charSpans = [];
+  let renderedIndex = 0;
+
   // True while the clock is stopped because the typing field lost focus or
   // the tab was hidden (as opposed to the player pressing Escape).
   let blurPaused = false;
@@ -128,17 +143,43 @@ const App = (() => {
     if (mode === "classic") {
       settings.difficulty = card.querySelector(".mode-options .selected")?.dataset.value || "medium";
       settings.duration = parseInt(card.querySelector(".time-options .selected")?.dataset.value || "60");
-      settings.text = TextContent.getClassicText(settings.difficulty);
     } else if (mode === "code") {
       settings.language = card.querySelector(".mode-options .selected")?.dataset.value || "javascript";
       settings.duration = parseInt(card.querySelector(".time-options .selected")?.dataset.value || "60");
-      settings.text = TextContent.getCodeSnippet(settings.language);
     } else if (mode === "words") {
       settings.wordCount = parseInt(card.querySelector(".word-options .selected")?.dataset.value || "50");
-      settings.text = TextContent.generateWords(settings.wordCount);
     }
 
+    settings.text = newRoundText(settings);
     startGame(settings);
+  }
+
+  // Fresh text for a round with these settings. Custom keeps the player's
+  // own text; Words draws a new set of words; the timed modes open a new
+  // stream of quotes or snippets and take enough of it for the whole test.
+  function newRoundText(settings) {
+    textStream = null;
+    if (settings.mode === "custom") return settings.text;
+    if (settings.mode === "words") return TextContent.generateWords(settings.wordCount);
+
+    textStream = TextContent.createStream(settings.mode, settings.mode === "code" ? settings.language : settings.difficulty);
+    let text = textStream.next();
+    const wanted = settings.duration * TIMED_CHARS_PER_SECOND + TIMED_LOOKAHEAD;
+    while (text.length < wanted) text += textStream.separator + textStream.next();
+    return text;
+  }
+
+  // Keeps a timed test supplied with text. The opening text already covers
+  // the whole test at TIMED_CHARS_PER_SECOND; this only adds more for a
+  // player who outruns that, and does so well below the lines in view.
+  function topUpText(state) {
+    if (!state.timedMode || !textStream) return;
+    while (state.chars.length - state.currentIndex < TIMED_LOOKAHEAD) {
+      const extra = textStream.separator + textStream.next();
+      const startIndex = state.chars.length;
+      GameEngine.appendText(extra);
+      appendTextDisplay(extra, startIndex);
+    }
   }
 
   function startGame(settings) {
@@ -153,6 +194,11 @@ const App = (() => {
 
     renderGameView(settings);
     showView("game");
+    // The view was hidden while it was drawn, so there was nothing to
+    // measure: place the caret now that the text has a layout.
+    const display = document.getElementById("textDisplay");
+    display.scrollTop = 0;
+    positionCaret(display, 0, true);
     focusGame();
   }
 
@@ -165,41 +211,49 @@ const App = (() => {
     document.getElementById("gameAccuracy").textContent = "100%";
     document.getElementById("progressFill").style.width = "0%";
 
-    renderTextDisplay(settings.text, [], 0);
+    renderTextDisplay(settings.text);
     document.getElementById("startHint").style.display = "block";
     document.getElementById("pauseOverlay").style.display = "none";
     document.getElementById("focusOverlay").style.display = "none";
   }
 
-  function renderTextDisplay(text, typed, currentIndex) {
+  // One <span> per character. A line break is shown as a return arrow
+  // followed by a real <br>; a space stays a real space (not &nbsp;) so the
+  // browser can wrap lines between words (.text-display is pre-wrap).
+  function charHtml(char, index, cls) {
+    if (char === "\n") return `<span class="${cls}" data-index="${index}">↵</span><br>`;
+    if (char === " ") return `<span class="${cls}" data-index="${index}"> </span>`;
+    return `<span class="${cls}" data-index="${index}">${escapeHtml(char)}</span>`;
+  }
+
+  // Draws a fresh round: every character untyped, the first one current.
+  function renderTextDisplay(text) {
     const container = document.getElementById("textDisplay");
     let html = "";
     for (let i = 0; i < text.length; i++) {
-      let cls = "char-untyped";
-      let char = text[i];
-      if (i < currentIndex) {
-        if (typed[i] && typed[i].correct) {
-          cls = "char-correct";
-        } else {
-          cls = "char-incorrect";
-        }
-      } else if (i === currentIndex) {
-        cls = "char-current";
-      }
-      if (char === "\n") {
-        html += `<span class="${cls}" data-index="${i}">\u21b5</span><br>`;
-      } else if (char === " ") {
-        // A real space (not &nbsp;) so the browser can wrap lines between
-        // words; .text-display uses white-space: pre-wrap to keep it visible.
-        html += `<span class="${cls}" data-index="${i}"> </span>`;
-      } else {
-        html += `<span class="${cls}" data-index="${i}">${escapeHtml(char)}</span>`;
-      }
+      html += charHtml(text[i], i, i === 0 ? "char-current" : "char-untyped");
     }
     container.innerHTML = html;
+    container.scrollTop = 0;
+    charSpans = Array.from(container.querySelectorAll("span[data-index]"));
+    renderedIndex = 0;
     ensureCaret(container);
-    positionCaret(container, currentIndex, true);
-    scrollToCurrentChar(currentIndex);
+    positionCaret(container, 0, true);
+  }
+
+  // Adds the characters of `extra` (which start at `startIndex` in the
+  // round's text) after the existing ones, without redrawing anything.
+  function appendTextDisplay(extra, startIndex) {
+    const container = document.getElementById("textDisplay");
+    const template = document.createElement("template");
+    let html = "";
+    for (let i = 0; i < extra.length; i++) {
+      html += charHtml(extra[i], startIndex + i, "char-untyped");
+    }
+    template.innerHTML = html;
+    const added = Array.from(template.content.querySelectorAll("span[data-index]"));
+    container.insertBefore(template.content, caretEl);
+    charSpans = charSpans.concat(added);
   }
 
   function ensureCaret(container) {
@@ -218,7 +272,7 @@ const App = (() => {
   // for the very first paint so the caret doesn't slide in from (0,0).
   function positionCaret(container, index, instant) {
     if (!caretEl) return;
-    const target = container.querySelector(`span[data-index="${index}"]`);
+    const target = charSpans[index];
     if (!target) {
       caretEl.classList.remove("visible");
       return;
@@ -239,7 +293,7 @@ const App = (() => {
 
   function scrollToCurrentChar(index) {
     const container = document.getElementById("textDisplay");
-    const current = container.querySelector(".char-current");
+    const current = charSpans[index];
     if (!current) return;
     const containerRect = container.getBoundingClientRect();
     const charRect = current.getBoundingClientRect();
@@ -251,19 +305,23 @@ const App = (() => {
   }
 
   function updateGameUI(state) {
+    topUpText(state);
+
     const timerEl = document.getElementById("gameTimer");
+    let progress;
     if (state.timedMode) {
       const remaining = Math.max(0, state.duration - state.elapsed);
       timerEl.textContent = formatTime(Math.ceil(remaining));
       timerEl.className = "timer" + (remaining <= 5 ? " timer-danger" : remaining <= 10 ? " timer-warning" : "");
+      // A timed test is over when the time is, so the bar follows the clock.
+      progress = (state.elapsed / state.duration) * 100;
     } else {
       timerEl.textContent = formatTime(Math.floor(state.elapsed));
+      progress = (state.currentIndex / state.chars.length) * 100;
     }
 
     document.getElementById("gameWpm").textContent = state.wpm;
     document.getElementById("gameAccuracy").textContent = state.accuracy + "%";
-
-    const progress = (state.currentIndex / state.chars.length) * 100;
     document.getElementById("progressFill").style.width = progress + "%";
 
     updateCharDisplay(state);
@@ -285,24 +343,28 @@ const App = (() => {
     liveStat.classList.add("milestone-pulse");
   }
 
+  function charClass(state, i) {
+    if (i < state.currentIndex) {
+      return state.typed[i] && state.typed[i].correct ? "char-correct" : "char-incorrect";
+    }
+    return i === state.currentIndex ? "char-current" : "char-untyped";
+  }
+
+  // Runs on every keystroke and every frame, so it only touches the
+  // characters between where the cursor was at the last paint and where it
+  // is now. Everything outside that range already has the right class.
+  // (Rewriting every character's class each time cost about twice as much
+  // per keystroke: 14 ms against 7 ms on a 10,000-character text. What is
+  // left is the browser laying the text out again when the underlined
+  // current character moves.)
   function updateCharDisplay(state) {
     const container = document.getElementById("textDisplay");
-    const spans = container.querySelectorAll("span[data-index]");
-
-    spans.forEach(span => {
-      const i = parseInt(span.dataset.index);
-      if (i < state.currentIndex) {
-        if (state.typed[i] && state.typed[i].correct) {
-          span.className = "char-correct";
-        } else {
-          span.className = "char-incorrect";
-        }
-      } else if (i === state.currentIndex) {
-        span.className = "char-current";
-      } else {
-        span.className = "char-untyped";
-      }
-    });
+    const from = Math.min(renderedIndex, state.currentIndex);
+    const to = Math.min(Math.max(renderedIndex, state.currentIndex), charSpans.length - 1);
+    for (let i = from; i <= to; i++) {
+      charSpans[i].className = charClass(state, i);
+    }
+    renderedIndex = state.currentIndex;
 
     positionCaret(container, state.currentIndex, false);
     scrollToCurrentChar(state.currentIndex);
@@ -479,13 +541,7 @@ const App = (() => {
     showView("results");
 
     document.getElementById("tryAgainBtn").addEventListener("click", () => {
-      if (currentSettings.mode === "words") {
-        currentSettings.text = TextContent.generateWords(currentSettings.wordCount);
-      } else if (currentSettings.mode === "classic") {
-        currentSettings.text = TextContent.getClassicText(currentSettings.difficulty);
-      } else if (currentSettings.mode === "code") {
-        currentSettings.text = TextContent.getCodeSnippet(currentSettings.language);
-      }
+      currentSettings.text = newRoundText(currentSettings);
       startGame(currentSettings);
     });
 

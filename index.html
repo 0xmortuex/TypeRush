@@ -107,7 +107,10 @@
       <div class="progress-fill" id="progressFill"></div>
     </div>
     <div class="game-area">
-      <div class="text-display" id="textDisplay"></div>
+      <!-- tabindex="-1": browsers make a scrollable box a Tab stop, which
+           would put this between the typing field and the navigation. The
+           box follows the cursor by itself and never needs keyboard focus. -->
+      <div class="text-display" id="textDisplay" tabindex="-1"></div>
       <div class="start-hint" id="startHint">Start typing...</div>
       <input type="text" id="gameInputHandler" class="game-input-handler" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     </div>

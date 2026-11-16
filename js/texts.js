@@ -292,5 +292,48 @@ const TextContent = (() => {
     return words.join(" ");
   }
 
-  return { getClassicText, getCodeSnippet, generateWords };
+  // Hands out the items of a pool in shuffled order. Every item comes up
+  // once before any repeats, and when the pool is reshuffled the same item
+  // is never served twice in a row. `random` is injectable for tests.
+  function createPicker(pool, random = Math.random) {
+    let queue = [];
+    let last = null;
+
+    function refill() {
+      queue = pool.slice();
+      for (let i = queue.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [queue[i], queue[j]] = [queue[j], queue[i]];
+      }
+      // Items are taken from the end; keep the previous item away from it.
+      if (queue.length > 1 && queue[queue.length - 1] === last) {
+        [queue[0], queue[queue.length - 1]] = [queue[queue.length - 1], queue[0]];
+      }
+    }
+
+    return function next() {
+      if (queue.length === 0) refill();
+      last = queue.pop();
+      return last;
+    };
+  }
+
+  // An endless supply of text for a timed test, so the test lasts for the
+  // time on the clock instead of ending when one quote runs out.
+  // next() returns the next quote or snippet; `separator` is what joins it
+  // to the text before it (a space between quotes, a blank line between
+  // code snippets).
+  function createStream(mode, option, random = Math.random) {
+    if (mode === "code") {
+      return { next: createPicker(codeSnippets[option] || codeSnippets.javascript, random), separator: "\n\n" };
+    }
+    return { next: createPicker(classicTexts[option] || classicTexts.medium, random), separator: " " };
+  }
+
+  // Read-only copies of the built-in content, for the test-suite.
+  function getContent() {
+    return JSON.parse(JSON.stringify({ classicTexts, codeSnippets, wordList }));
+  }
+
+  return { getClassicText, getCodeSnippet, generateWords, createStream, getContent };
 })();
