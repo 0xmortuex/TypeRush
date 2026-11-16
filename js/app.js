@@ -15,6 +15,9 @@ const App = (() => {
   const reducedMotionQuery = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
   const prefersReducedMotion = () => !!(reducedMotionQuery && reducedMotionQuery.matches);
 
+  // On Apple keyboards the Option key (reported as Alt) types characters.
+  const IS_MAC = /Mac|iPhone|iPad|iPod/.test(navigator.platform || "");
+
   const views = {
     home: null,
     game: null,
@@ -149,10 +152,17 @@ const App = (() => {
     });
 
     document.getElementById("startCustomBtn").addEventListener("click", () => {
-      const text = document.getElementById("customTextarea").value.trim();
+      const pasted = document.getElementById("customTextarea").value.trim();
+      // Text copied from a web page or a document is full of characters no
+      // key produces (curly quotes, long dashes, non-breaking spaces). They
+      // are swapped for the ones a keyboard has, and the player is told.
+      const text = TextContent.normalizeCustomText(pasted);
       if (text.length < 10) {
         showToast("Please enter at least 10 characters.");
         return;
+      }
+      if (text !== pasted) {
+        showToast("Your text was tidied so every character can be typed: curly quotes, long dashes and the like were replaced with plain ones.");
       }
       startGame({ mode: "custom", text });
     });
@@ -510,7 +520,7 @@ const App = (() => {
       return;
     }
 
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (isCharacterKey(e)) {
       e.preventDefault();
       takeTypingFocus(handler);
       const s = GameEngine.getState();
@@ -522,6 +532,22 @@ const App = (() => {
         playSound("click");
       }
     }
+  }
+
+  // True for a key press that types a character rather than triggering a
+  // shortcut. Many keyboard layouts reach characters such as { } [ ] @ \ | ~
+  // through AltGr, which Windows reports as Ctrl+Alt held together, or
+  // through Option on a Mac, which reports Alt. Treating every Ctrl or Alt
+  // press as a shortcut made those characters impossible to type, which
+  // rules out Code mode on German, French, Spanish, Turkish, Nordic and
+  // many other layouts. Ctrl or Cmd alone, and Alt outside macOS (where it
+  // opens browser menus), remain shortcuts.
+  function isCharacterKey(e) {
+    if (e.key.length !== 1 || e.metaKey) return false;
+    if (e.getModifierState("AltGraph") || (e.ctrlKey && e.altKey)) return true;
+    if (e.ctrlKey) return false;
+    if (e.altKey) return IS_MAC;
+    return true;
   }
 
   // Results screen: Enter starts the same kind of round again, Escape goes

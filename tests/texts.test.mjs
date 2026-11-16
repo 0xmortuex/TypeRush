@@ -105,6 +105,71 @@ test("quotes are joined by a space and code snippets by a blank line", () => {
   assert.equal(TextContent.createStream("code", "python").separator, "\n\n");
 });
 
+// ---------------------------------------------------------------------------
+// Custom text: pasted text is made typable.
+// Special characters are built from code points so this file stays ASCII
+// and the invisible ones can be seen.
+// ---------------------------------------------------------------------------
+
+const u = (...codePoints) => String.fromCodePoint(...codePoints);
+const normalize = text => TextContent.normalizeCustomText(text);
+
+test("curly quotes become straight quotes", () => {
+  const curly = `${u(0x201c)}It${u(0x2019)}s ${u(0x2018)}fine${u(0x2019)},${u(0x201d)} she said.`;
+  assert.equal(normalize(curly), `"It's 'fine'," she said.`);
+  assert.equal(normalize(`${u(0x201e)}low${u(0x201f)} ${u(0x201a)}low${u(0x201b)} 5${u(0x2032)} 3${u(0x2033)}`), `"low" 'low' 5' 3"`);
+});
+
+test("dashes of every length become a hyphen and an ellipsis becomes three dots", () => {
+  const dashes = [0x2010, 0x2011, 0x2012, 0x2013, 0x2014, 0x2015, 0x2212].map(c => `a${u(c)}b`).join(" ");
+  assert.equal(normalize(dashes), "a-b a-b a-b a-b a-b a-b a-b");
+  assert.equal(normalize(`wait${u(0x2026)} what`), "wait... what");
+});
+
+test("non-breaking and fixed-width spaces become a normal space", () => {
+  for (const code of [0x00a0, 0x2002, 0x2003, 0x2009, 0x202f, 0x3000]) {
+    assert.equal(normalize(`one${u(code)}two`), "one two", `U+${code.toString(16)}`);
+  }
+});
+
+test("invisible characters are removed", () => {
+  for (const code of [0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x00ad]) {
+    assert.equal(normalize(`in${u(code)}visible`), "invisible", `U+${code.toString(16)}`);
+  }
+  assert.equal(normalize(`bell${u(0x07)} null${u(0x00)} delete${u(0x7f)}`), "bell null delete");
+});
+
+test("line endings are unified, tabs become two spaces, trailing spaces go", () => {
+  assert.equal(normalize("one\r\ntwo\rthree\nfour"), "one\ntwo\nthree\nfour");
+  assert.equal(normalize("if (x) {\n\treturn 1;\n}"), "if (x) {\n  return 1;\n}");
+  assert.equal(normalize("ends in spaces   \nnext line \t\nlast"), "ends in spaces\nnext line\nlast");
+  assert.equal(normalize("   padded   "), "padded");
+});
+
+test("indentation, blank lines and double spaces inside a line are kept", () => {
+  const code = "def f():\n    return 1\n\n\nx  =  2";
+  assert.equal(normalize(code), code);
+});
+
+test("typable text is returned unchanged", () => {
+  const plain = "Plain text, nothing special: 100% typable! (a+b)*c = [d] {e} <f> #g @h ~i `j` \\k | l ^m & n";
+  assert.equal(normalize(plain), plain);
+  for (const pool of [...Object.values(content.classicTexts), ...Object.values(content.codeSnippets)]) {
+    pool.forEach(text => assert.equal(normalize(text), text));
+  }
+});
+
+test("letters of any alphabet, accents and emoji are left alone", () => {
+  const text = `na${u(0xef)}ve caf${u(0xe9)} ${u(0xfc)}ber ${u(0x434, 0x43e, 0x431, 0x440, 0x44b, 0x439)} ${u(0x65e5, 0x672c)} ${u(0x1f600)}`;
+  assert.equal(normalize(text), text);
+});
+
+test("a realistic paste from a document", () => {
+  const pasted = `${u(0x201c)}It${u(0x2019)}s a long${u(0x2011)}awaited day,${u(0x201d)} she said ${u(0x2014)} and smiled${u(0x2026)}${u(0xa0)}Really.  \r\n\tSecond line${u(0x200b)} here.   `;
+  assert.equal(normalize(pasted), `"It's a long-awaited day," she said - and smiled... Really.\n  Second line here.`);
+  assert.match(normalize(pasted), /^[\x20-\x7e\n]+$/);
+});
+
 test("an unknown option falls back like the single-text getters do", () => {
   const classic = TextContent.createStream("classic", "nope", seededRandom(1));
   assert.ok(content.classicTexts.medium.includes(classic.next()));
