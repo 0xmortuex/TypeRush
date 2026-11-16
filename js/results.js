@@ -38,7 +38,7 @@ const Results = (() => {
           <span class="stat-label">Accuracy</span>
         </div>
         <div class="stat-card">
-          <span class="stat-value">${result.correctCount}<span class="stat-dim">/${result.incorrectCount}/${result.totalTyped}</span></span>
+          <span class="stat-value">${result.keystrokes - result.mistakes}<span class="stat-dim">/${result.mistakes}/${result.keystrokes}</span></span>
           <span class="stat-label">Correct / Errors / Total</span>
         </div>
         <div class="stat-card">
@@ -159,18 +159,26 @@ const Results = (() => {
       </div>`;
   }
 
+  // Every number here is counted in keystrokes, the same basis as the
+  // accuracy figure: a mistake still counts after it has been corrected.
+  // Mistakes still standing in the text at the end are called out because
+  // those are the ones that also cost WPM.
   function renderCharBreakdown(result) {
-    const total = result.correctCount + result.incorrectCount;
+    const total = result.keystrokes;
     if (total === 0) return "";
-    const correctPct = (result.correctCount / total) * 100;
-    const incorrectPct = (result.incorrectCount / total) * 100;
+    const correct = total - result.mistakes;
+    const correctPct = (correct / total) * 100;
+    const incorrectPct = (result.mistakes / total) * 100;
 
     const mistypedEntries = Object.entries(result.mistyped || {}).sort((a, b) => b[1] - a[1]).slice(0, 5);
     const mistypedHtml = mistypedEntries.length > 0
       ? `<div class="mistyped-list"><h4>Most Mistyped</h4>${mistypedEntries.map(([ch, count]) =>
-          `<span class="mistyped-char"><kbd>${ch}</kbd> ${count}x</span>`
+          `<span class="mistyped-char"><kbd>${escapeHtml(ch)}</kbd> ${count}x</span>`
         ).join("")}</div>`
       : "";
+
+    let errorLabel = `${result.mistakes} ${result.mistakes === 1 ? "error" : "errors"}`;
+    if (result.incorrectCount > 0) errorLabel += ` · ${result.incorrectCount} uncorrected`;
 
     return `
       <div class="char-breakdown">
@@ -180,8 +188,8 @@ const Results = (() => {
           <div class="char-bar-incorrect" style="width: ${incorrectPct}%"></div>
         </div>
         <div class="char-bar-labels">
-          <span class="char-label-correct">${result.correctCount} correct</span>
-          <span class="char-label-incorrect">${result.incorrectCount} errors</span>
+          <span class="char-label-correct">${correct} correct</span>
+          <span class="char-label-incorrect">${errorLabel}</span>
         </div>
         ${mistypedHtml}
       </div>`;
@@ -219,13 +227,26 @@ const Results = (() => {
     return "Keep practicing!";
   }
 
-  function getModeLabel(result) {
-    let label = result.mode.charAt(0).toUpperCase() + result.mode.slice(1);
-    if (result.difficulty) label += ` \u00b7 ${result.difficulty}`;
-    if (result.language) label += ` \u00b7 ${result.language}`;
-    label += ` \u00b7 ${result.duration}s`;
-    return label;
+  // "Classic \u00b7 hard", "Code \u00b7 rust", "Words \u00b7 50 words", "Custom".
+  // Used for the game header, the results subtitle and leaderboard rows so
+  // a round reads the same everywhere. Only the detail that belongs to the
+  // mode is shown: difficulty is a Classic setting, language a Code one.
+  function describeRound(round) {
+    const parts = [round.mode.charAt(0).toUpperCase() + round.mode.slice(1)];
+    if (round.mode === "classic" && round.difficulty) parts.push(round.difficulty);
+    if (round.mode === "code" && round.language) parts.push(round.language);
+    if (round.mode === "words" && round.wordCount) parts.push(`${round.wordCount} words`);
+    return parts.join(" \u00b7 ");
   }
 
-  return { render };
+  function getModeLabel(result) {
+    return `${describeRound(result)} \u00b7 ${result.duration}s`;
+  }
+
+  function escapeHtml(str) {
+    const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
+    return String(str).replace(/[&<>"']/g, c => map[c]);
+  }
+
+  return { render, describeRound };
 })();

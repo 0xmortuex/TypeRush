@@ -97,7 +97,7 @@ const App = (() => {
         showToast("Please enter at least 10 characters.");
         return;
       }
-      startGame({ mode: "custom", text, duration: 9999 });
+      startGame({ mode: "custom", text });
     });
   }
 
@@ -117,7 +117,6 @@ const App = (() => {
       settings.text = TextContent.getCodeSnippet(settings.language);
     } else if (mode === "words") {
       settings.wordCount = parseInt(card.querySelector(".word-options .selected")?.dataset.value || "50");
-      settings.duration = 9999;
       settings.text = TextContent.generateWords(settings.wordCount);
     }
 
@@ -140,11 +139,9 @@ const App = (() => {
   }
 
   function renderGameView(settings) {
-    const modeLabel = settings.mode.charAt(0).toUpperCase() + settings.mode.slice(1);
-    const subLabel = settings.difficulty || settings.language || `${settings.wordCount} words`;
-
-    document.getElementById("gameMode").textContent = `${modeLabel} \u00b7 ${subLabel}`;
-    document.getElementById("gameTimer").textContent = settings.duration < 9999 ? formatTime(settings.duration) : "0:00";
+    document.getElementById("gameMode").textContent = Results.describeRound(settings);
+    // Timed tests count down from their duration; the others count up.
+    document.getElementById("gameTimer").textContent = formatTime(settings.duration || 0);
     document.getElementById("gameTimer").className = "timer";
     document.getElementById("gameWpm").textContent = "0";
     document.getElementById("gameAccuracy").textContent = "100%";
@@ -463,7 +460,7 @@ const App = (() => {
               <span class="lb-rank">${i + 1}</span>
               <span class="lb-wpm">${e.wpm}</span>
               <span class="lb-acc">${e.accuracy}%</span>
-              <span class="lb-mode">${e.mode}${e.difficulty ? " \u00b7 " + e.difficulty : ""}${e.language ? " \u00b7 " + e.language : ""}</span>
+              <span class="lb-mode">${escapeHtml(Results.describeRound(e).toLowerCase())}</span>
               <span class="lb-dur">${e.duration}s</span>
               <span class="lb-date">${new Date(e.date).toLocaleDateString()}</span>
             </div>`;

@@ -2,10 +2,31 @@ const Leaderboard = (() => {
   const STORAGE_KEY = "typerush_leaderboard";
   const MAX_ENTRIES = 50;
 
+  // Difficulty is a Classic-only setting and language a Code-only one.
+  // Entries saved before November 2026 carry difficulty "medium" for every
+  // mode (the engine used to default it), so the stray values are blanked
+  // when entries are read. This keeps old Code / Words / Custom scores
+  // counting towards personal bests now that new results leave those
+  // fields empty, and stops old Code scores in different languages from
+  // being lumped together.
+  function normalizeEntry(entry) {
+    return {
+      ...entry,
+      difficulty: entry.mode === "classic" ? (entry.difficulty || "") : "",
+      language: entry.mode === "code" ? (entry.language || "") : ""
+    };
+  }
+
+  // Scores are only comparable within the same mode and variant.
+  function categoryKey(entry) {
+    const e = normalizeEntry(entry);
+    return `${e.mode}|${e.difficulty}|${e.language}`;
+  }
+
   function load() {
     try {
       const data = localStorage.getItem(STORAGE_KEY);
-      return data ? JSON.parse(data) : [];
+      return data ? JSON.parse(data).map(normalizeEntry) : [];
     } catch {
       return [];
     }
@@ -19,10 +40,11 @@ const Leaderboard = (() => {
 
   function addEntry(result) {
     const entries = load();
-    entries.push({
+    entries.push(normalizeEntry({
       mode: result.mode,
       difficulty: result.difficulty || "",
       language: result.language || "",
+      wordCount: result.wordCount || 0,
       duration: result.duration,
       wpm: result.wpm,
       rawWpm: result.rawWpm,
@@ -30,7 +52,7 @@ const Leaderboard = (() => {
       consistency: result.consistency,
       date: result.date,
       textPreview: result.textPreview
-    });
+    }));
     entries.sort((a, b) => b.wpm - a.wpm);
     if (entries.length > MAX_ENTRIES) entries.length = MAX_ENTRIES;
     save(entries);
@@ -56,11 +78,8 @@ const Leaderboard = (() => {
   }
 
   function isPersonalBest(result) {
-    const entries = load().filter(e =>
-      e.mode === result.mode &&
-      e.difficulty === (result.difficulty || "") &&
-      e.language === (result.language || "")
-    );
+    const key = categoryKey(result);
+    const entries = load().filter(e => categoryKey(e) === key);
     if (entries.length === 0) return true;
     return result.wpm > Math.max(...entries.map(e => e.wpm));
   }
@@ -69,7 +88,7 @@ const Leaderboard = (() => {
     const entries = load();
     const best = {};
     entries.forEach(e => {
-      const key = `${e.mode}-${e.difficulty || e.language || ""}`;
+      const key = categoryKey(e);
       if (!best[key] || e.wpm > best[key].wpm) {
         best[key] = e;
       }

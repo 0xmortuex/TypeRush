@@ -6,7 +6,10 @@ const Achievements = (() => {
     { id: "first_steps", icon: "\u26a1", title: "First Steps", description: "Complete your first typing test", check: (r, s) => s.totalTests >= 1 },
     { id: "speed_demon", icon: "\ud83d\udd25", title: "Speed Demon", description: "Reach 80+ WPM", check: (r) => r.wpm >= 80 },
     { id: "perfectionist", icon: "\ud83d\udcaf", title: "Perfectionist", description: "Achieve 100% accuracy on any test", check: (r) => r.accuracy === 100 },
-    { id: "marathoner", icon: "\ud83c\udfc3", title: "Marathoner", description: "Complete a 120-second test", check: (r) => r.configuredDuration >= 120 },
+    // Earned by a round that actually lasted two minutes. This used to look
+    // at the configured duration, which Words and Custom rounds reported as
+    // 9999 seconds, so any of them unlocked it.
+    { id: "marathoner", icon: "\ud83c\udfc3", title: "Marathoner", description: "Complete a 120-second test", check: (r) => r.duration >= 120 },
     { id: "code_monkey", icon: "\ud83d\udcbb", title: "Code Monkey", description: "Complete 5 tests in Code mode", check: (r, s) => s.codeTests >= 5 },
     { id: "wordsmith", icon: "\ud83d\udcda", title: "Wordsmith", description: "Complete 10 tests in Classic mode", check: (r, s) => s.classicTests >= 10 },
     { id: "sharpshooter", icon: "\ud83c\udfaf", title: "Sharpshooter", description: "Achieve 98%+ accuracy 5 times", check: (r, s) => s.highAccuracyCount >= 5 },
