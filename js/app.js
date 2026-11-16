@@ -41,6 +41,11 @@ const App = (() => {
   // the tab was hidden (as opposed to the player pressing Escape).
   let blurPaused = false;
 
+  // When the results screen last appeared, and how long its keyboard
+  // shortcuts stay off after that.
+  let resultsShownAt = 0;
+  const RESULTS_KEY_GUARD_MS = 1000;
+
   function init() {
     // A problem with saved data (blocked or full storage, a damaged value)
     // is shown to the player and logged, never swallowed.
@@ -114,6 +119,7 @@ const App = (() => {
     document.getElementById("soundToggle").addEventListener("click", () => {
       soundEnabled = !soundEnabled;
       document.getElementById("soundToggle").textContent = soundEnabled ? "\ud83d\udd0a" : "\ud83d\udd07";
+      document.getElementById("soundToggle").setAttribute("aria-pressed", String(soundEnabled));
     });
 
     document.getElementById("lbBackBtn").addEventListener("click", () => showView("home"));
@@ -128,9 +134,15 @@ const App = (() => {
       });
 
       card.querySelectorAll(".mode-option").forEach(opt => {
+        // The chosen option of each group is announced as a pressed button.
+        opt.setAttribute("aria-pressed", String(opt.classList.contains("selected")));
         opt.addEventListener("click", () => {
-          opt.closest(".mode-options, .time-options, .word-options").querySelectorAll(".mode-option").forEach(o => o.classList.remove("selected"));
+          opt.closest(".mode-options, .time-options, .word-options").querySelectorAll(".mode-option").forEach(o => {
+            o.classList.remove("selected");
+            o.setAttribute("aria-pressed", "false");
+          });
           opt.classList.add("selected");
+          opt.setAttribute("aria-pressed", "true");
         });
       });
     });
@@ -404,7 +416,13 @@ const App = (() => {
   function bindGameInput() {
     const handler = document.getElementById("gameInputHandler");
 
-    document.addEventListener("keydown", onGameKeydown);
+    // One listener, so a key belongs to the view that was showing when it
+    // was pressed (the Enter that restarts from the results screen must not
+    // also be typed into the new round).
+    document.addEventListener("keydown", (e) => {
+      if (currentView === "game") onGameKeydown(e);
+      else if (currentView === "results") onResultsKeydown(e);
+    });
 
     // Losing the typing field mid-round stops the clock until the player
     // comes back, so time away is not counted as typing time.
@@ -499,6 +517,32 @@ const App = (() => {
     }
   }
 
+  // Results screen: Enter starts the same kind of round again, Escape goes
+  // back to the mode list. Both are ignored for a moment after the results
+  // appear, because a player who was still typing when the time ran out
+  // would otherwise restart or leave by accident.
+  function onResultsKeydown(e) {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+    if (performance.now() - resultsShownAt < RESULTS_KEY_GUARD_MS) return;
+
+    if (e.key === "Escape") {
+      e.preventDefault();
+      leaveGame();
+      showView("home");
+    } else if (e.key === "Enter" && !isOtherControl(e.target)) {
+      // (a focused button or link handles its own Enter)
+      e.preventDefault();
+      tryAgain();
+    }
+  }
+
+  // A new round with the settings of the last one: new words or quotes, or
+  // the same custom text.
+  function tryAgain() {
+    currentSettings.text = newRoundText(currentSettings);
+    startGame(currentSettings);
+  }
+
   // Called for every key that is typed into the round.
   function takeTypingFocus(handler) {
     document.getElementById("startHint").style.display = "none";
@@ -550,11 +594,9 @@ const App = (() => {
     const container = document.getElementById("resultsContent");
     Results.render(results, container);
     showView("results");
+    resultsShownAt = performance.now();
 
-    document.getElementById("tryAgainBtn").addEventListener("click", () => {
-      currentSettings.text = newRoundText(currentSettings);
-      startGame(currentSettings);
-    });
+    document.getElementById("tryAgainBtn").addEventListener("click", tryAgain);
 
     document.getElementById("newModeBtn").addEventListener("click", () => {
       leaveGame();
@@ -592,13 +634,13 @@ const App = (() => {
       let html = `
         <div class="lb-filters">
           ${["all", "classic", "code", "words", "custom"].map(f =>
-            `<button class="lb-filter ${currentFilter === f ? "active" : ""}" data-filter="${f}">${f.charAt(0).toUpperCase() + f.slice(1)}</button>`
+            `<button class="lb-filter ${currentFilter === f ? "active" : ""}" data-filter="${f}" aria-pressed="${currentFilter === f}">${f.charAt(0).toUpperCase() + f.slice(1)}</button>`
           ).join("")}
         </div>
         <div class="lb-sort">
           Sort by:
           ${["wpm", "accuracy", "date"].map(s =>
-            `<button class="lb-sort-btn ${currentSort === s ? "active" : ""}" data-sort="${s}">${s.charAt(0).toUpperCase() + s.slice(1)}</button>`
+            `<button class="lb-sort-btn ${currentSort === s ? "active" : ""}" data-sort="${s}" aria-pressed="${currentSort === s}">${s.charAt(0).toUpperCase() + s.slice(1)}</button>`
           ).join("")}
         </div>
       `;
@@ -733,6 +775,7 @@ const App = (() => {
   document.addEventListener("DOMContentLoaded", init);
 
   document.getElementById("pauseResume")?.addEventListener("click", togglePause);
+  document.getElementById("pauseRestart")?.addEventListener("click", tryAgain);
   document.getElementById("pauseQuit")?.addEventListener("click", () => {
     leaveGame();
     showView("home");

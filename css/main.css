@@ -227,6 +227,13 @@ body {
   font-weight: 600;
 }
 
+/* The Start button of the Classic, Code and Words cards (the Custom card
+   already had one). The whole card still starts the mode on click; the
+   button makes that reachable from the keyboard. */
+.mode-start {
+  margin-top: 1rem;
+}
+
 .custom-textarea {
   width: 100%;
   background: var(--surface);

@@ -53,6 +53,7 @@ const Results = (() => {
         <button class="btn btn-secondary" id="newModeBtn">New Mode</button>
         ${isPB ? '<button class="btn btn-save pulse" id="saveBtn">\ud83c\udfc6 Save to Leaderboard</button>' : '<button class="btn btn-secondary" id="saveBtn">Save to Leaderboard</button>'}
       </div>
+      <p class="results-hint"><kbd>Enter</kbd> try again <span aria-hidden="true">\u00b7</span> <kbd>Esc</kbd> new mode</p>
     `;
 
     animateWpmCounter(result.wpm, wpmColor);

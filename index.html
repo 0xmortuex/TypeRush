@@ -14,18 +14,18 @@
 </head>
 <body>
   <nav class="navbar">
-    <a href="#" class="nav-logo" id="navLogo">
+    <a href="#" class="nav-logo" id="navLogo" aria-label="TypeRush home">
       <span class="logo-bolt">&zwj;&#9889;</span>
       <span class="logo-text">TypeRush</span>
     </a>
     <div class="nav-actions">
-      <button class="nav-btn" id="soundToggle" title="Toggle sound">&#128263;</button>
-      <button class="nav-btn" id="achievementsBtn" title="Achievements">&#127942;</button>
-      <button class="nav-btn" id="leaderboardBtn" title="Leaderboard">&#127941;</button>
+      <button class="nav-btn" id="soundToggle" title="Toggle sound" aria-label="Sound effects" aria-pressed="false">&#128263;</button>
+      <button class="nav-btn" id="achievementsBtn" title="Achievements" aria-label="Achievements">&#127942;</button>
+      <button class="nav-btn" id="leaderboardBtn" title="Leaderboard" aria-label="Leaderboard">&#127941;</button>
     </div>
   </nav>
 
-  <div id="toastContainer" class="toast-container"></div>
+  <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
 
   <!-- HOME VIEW -->
   <main class="view active" id="homeView">
@@ -39,55 +39,58 @@
         <div class="mode-icon">&#128221;</div>
         <h2 class="mode-name">Classic Mode</h2>
         <p class="mode-desc">Type famous quotes and excerpts</p>
-        <div class="mode-options">
+        <div class="mode-options" role="group" aria-label="Difficulty">
           <button class="mode-option" data-value="easy">Easy</button>
           <button class="mode-option selected" data-value="medium">Medium</button>
           <button class="mode-option" data-value="hard">Hard</button>
         </div>
-        <div class="time-options">
+        <div class="time-options" role="group" aria-label="Duration">
           <button class="mode-option" data-value="15">15s</button>
           <button class="mode-option" data-value="30">30s</button>
           <button class="mode-option selected" data-value="60">60s</button>
           <button class="mode-option" data-value="120">120s</button>
         </div>
+        <button class="btn btn-primary mode-start">Start Typing</button>
       </div>
       <!-- Code -->
       <div class="mode-card" data-mode="code">
         <div class="mode-icon">&#128187;</div>
         <h2 class="mode-name">Code Mode</h2>
         <p class="mode-desc">Type real code snippets — brackets, semicolons, and all</p>
-        <div class="mode-options">
+        <div class="mode-options" role="group" aria-label="Language">
           <button class="mode-option selected" data-value="javascript">JavaScript</button>
           <button class="mode-option" data-value="python">Python</button>
           <button class="mode-option" data-value="html">HTML</button>
           <button class="mode-option" data-value="css">CSS</button>
           <button class="mode-option" data-value="rust">Rust</button>
         </div>
-        <div class="time-options">
+        <div class="time-options" role="group" aria-label="Duration">
           <button class="mode-option" data-value="15">15s</button>
           <button class="mode-option" data-value="30">30s</button>
           <button class="mode-option selected" data-value="60">60s</button>
           <button class="mode-option" data-value="120">120s</button>
         </div>
+        <button class="btn btn-primary mode-start">Start Typing</button>
       </div>
       <!-- Words -->
       <div class="mode-card" data-mode="words">
         <div class="mode-icon">&#128292;</div>
         <h2 class="mode-name">Words Mode</h2>
         <p class="mode-desc">Pure random words — no punctuation, just speed</p>
-        <div class="word-options">
+        <div class="word-options" role="group" aria-label="Number of words">
           <button class="mode-option" data-value="25">25</button>
           <button class="mode-option selected" data-value="50">50</button>
           <button class="mode-option" data-value="100">100</button>
           <button class="mode-option" data-value="200">200</button>
         </div>
+        <button class="btn btn-primary mode-start">Start Typing</button>
       </div>
       <!-- Custom -->
       <div class="mode-card" data-mode="custom">
         <div class="mode-icon">&#9999;&#65039;</div>
         <h2 class="mode-name">Custom Mode</h2>
         <p class="mode-desc">Paste your own text and race against it</p>
-        <textarea id="customTextarea" class="custom-textarea" placeholder="Paste your text here (minimum 10 characters)..." rows="4"></textarea>
+        <textarea id="customTextarea" class="custom-textarea" aria-label="Your own text" placeholder="Paste your text here (minimum 10 characters)..." rows="4"></textarea>
         <button class="btn btn-primary" id="startCustomBtn">Start Typing</button>
       </div>
     </div>
@@ -112,13 +115,14 @@
            box follows the cursor by itself and never needs keyboard focus. -->
       <div class="text-display" id="textDisplay" tabindex="-1"></div>
       <div class="start-hint" id="startHint">Start typing...</div>
-      <input type="text" id="gameInputHandler" class="game-input-handler" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <input type="text" id="gameInputHandler" class="game-input-handler" aria-label="Type the text shown above" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     </div>
     <!-- Pause overlay -->
-    <div class="pause-overlay" id="pauseOverlay" style="display:none">
+    <div class="pause-overlay" id="pauseOverlay" style="display:none" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
       <div class="pause-box">
-        <h2>Paused</h2>
+        <h2 id="pauseTitle">Paused</h2>
         <button class="btn btn-primary" id="pauseResume">Resume</button>
+        <button class="btn btn-secondary" id="pauseRestart">Restart</button>
         <button class="btn btn-secondary" id="pauseQuit">Quit</button>
       </div>
     </div>

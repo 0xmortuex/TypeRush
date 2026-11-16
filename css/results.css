@@ -285,7 +285,31 @@
   justify-content: center;
   gap: 0.75rem;
   flex-wrap: wrap;
-  padding: 1rem 0 2rem;
+  padding: 1rem 0 0.75rem;
+}
+
+/* Keyboard shortcuts for the actions above */
+.results-hint {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  padding-bottom: 2rem;
+}
+
+.results-hint kbd {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--text-primary);
+}
+
+/* No keyboard on a touch-only device: keep the old spacing instead. */
+@media (hover: none) and (pointer: coarse) {
+  .results-actions { padding-bottom: 2rem; }
+  .results-hint { display: none; }
 }
 
 /* Responsive */
