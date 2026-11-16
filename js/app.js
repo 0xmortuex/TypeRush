@@ -10,6 +10,7 @@ const App = (() => {
   // milestone/animation bookkeeping from the previous round.
   let lastWpmMilestone = 0;
   const WPM_MILESTONES = [50, 80, 100, 120, 150];
+  const MILESTONE_MIN_SECONDS = 3;
 
   const reducedMotionQuery = window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
   const prefersReducedMotion = () => !!(reducedMotionQuery && reducedMotionQuery.matches);
@@ -348,15 +349,21 @@ const App = (() => {
     document.getElementById("progressFill").style.width = progress + "%";
 
     updateCharDisplay(state);
-    checkWpmMilestone(state.wpm);
+    checkWpmMilestone(state);
   }
 
   // Subtle pulse on the live WPM readout when the player crosses a speed
   // milestone. Purely decorative, so it's skipped entirely under
   // prefers-reduced-motion rather than just relying on the CSS gate.
-  function checkWpmMilestone(wpm) {
+  function checkWpmMilestone(state) {
     if (prefersReducedMotion()) return;
-    const hit = WPM_MILESTONES.find(m => wpm >= m && lastWpmMilestone < m);
+    // WPM over the first few keystrokes is enormous (one key in 12 ms reads
+    // as about 1000 WPM), which used to set off every milestone in the
+    // first tenth of a second and leave none for the rest of the round.
+    if (state.elapsed < MILESTONE_MIN_SECONDS) return;
+    // The highest milestone reached, so a fast start pulses once, not once
+    // per milestone passed.
+    const hit = WPM_MILESTONES.filter(m => state.wpm >= m && lastWpmMilestone < m).pop();
     if (!hit) return;
     lastWpmMilestone = hit;
     const liveStat = document.getElementById("gameWpm").closest(".live-stat");
